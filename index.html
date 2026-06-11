@@ -1,0 +1,1469 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube + Twitch 同時視聴ビューワー</title>
+<style>
+  :root {
+    --bg: #0b0b0e;
+    --panel: #15151a;
+    --panel-2: #1d1d24;
+    --border: #2a2a32;
+    --border-strong: #3a3a44;
+    --text: #f2f2f4;
+    --text-dim: #9b9ba6;
+    --text-muted: #6a6a76;
+    --accent: #ff0033;
+    --accent-hover: #d50028;
+    --accent-soft: rgba(255, 0, 51, 0.14);
+    --youtube: #ff0033;
+    --twitch: #9146ff;
+    --twitch-soft: rgba(145, 70, 255, 0.18);
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", sans-serif;
+    overflow: hidden; font-size: 14px;
+  }
+  button, input, select { font-family: inherit; }
+
+  #app {
+    display: grid;
+    grid-template-rows: 52px 44px 1fr;
+    height: 100vh;
+  }
+
+  /* ===== Topbar ===== */
+  #topbar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 14px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .logo {
+    display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px;
+    user-select: none; padding-right: 4px; white-space: nowrap;
+  }
+  .logo .yt {
+    width: 24px; height: 18px; background: var(--youtube); border-radius: 4px;
+    position: relative; flex-shrink: 0;
+  }
+  .logo .yt::after {
+    content: ""; position: absolute; left: 8px; top: 3px;
+    border: 5px solid transparent; border-left: 8px solid #fff; border-right: 0;
+  }
+  .logo .tw {
+    width: 18px; height: 18px; background: var(--twitch); border-radius: 4px;
+    position: relative; flex-shrink: 0;
+  }
+  .logo .tw::after {
+    content: ""; position: absolute; left: 4px; top: 3px;
+    width: 10px; height: 11px; background: #fff;
+    clip-path: polygon(0 0, 100% 0, 100% 70%, 70% 100%, 50% 100%, 30% 80%, 0 80%);
+  }
+  .topbar-hint {
+    flex: 1; min-width: 0; font-size: 12px; color: var(--text-dim);
+    line-height: 1.4; overflow: hidden;
+  }
+  .topbar-hint b { color: var(--text); font-weight: 600; }
+  .icon-btn {
+    background: transparent; border: 1px solid transparent; color: var(--text-dim);
+    height: 36px; padding: 0 10px; min-width: 36px; border-radius: 6px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .icon-btn:hover { background: var(--panel-2); color: var(--text); border-color: var(--border); }
+  .icon-btn.active { color: #fff; background: var(--accent-soft); border-color: var(--accent); }
+  .icon-btn .ico { font-size: 15px; }
+
+  /* ===== Toolbar ===== */
+  #toolbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 12px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  #toolbar .group {
+    display: flex; align-items: center; gap: 4px;
+    padding: 0 6px;
+    border-right: 1px solid var(--border);
+    height: 28px;
+    flex: 0 0 auto;
+  }
+  #toolbar .group:last-child { border-right: 0; }
+  #toolbar .group-label {
+    font-size: 11px; color: var(--text-muted); font-weight: 600;
+    letter-spacing: 0.5px; text-transform: uppercase; margin-right: 4px;
+    white-space: nowrap;
+  }
+  .ctrl-btn {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim);
+    height: 28px; padding: 0 10px; border-radius: 5px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 4px; font-size: 12px;
+    transition: all 0.1s;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+  .ctrl-btn:hover { color: var(--text); border-color: var(--border-strong); background: #24242c; }
+  .ctrl-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .ctrl-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .ctrl-btn.active { color: #fff; border-color: var(--accent); background: var(--accent-soft); }
+  .ctrl-btn .ico { font-size: 13px; }
+  .ctrl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .layout-tiles { display: flex; gap: 3px; }
+  .layout-tile {
+    width: 26px; height: 22px; background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 4px; cursor: pointer; padding: 2px; display: grid; gap: 1px;
+    transition: all 0.1s;
+  }
+  .layout-tile:hover { border-color: var(--border-strong); }
+  .layout-tile.active { border-color: var(--accent); background: var(--accent-soft); }
+  .layout-tile .cell { background: var(--text-muted); border-radius: 1px; opacity: 0.6; }
+  .layout-tile.active .cell { background: var(--accent); opacity: 0.9; }
+
+  .vol-wrap { display: flex; align-items: center; gap: 6px; padding: 0 4px; }
+  .vol-wrap input[type=range] {
+    width: 90px; height: 4px;
+    appearance: none; -webkit-appearance: none;
+    background: var(--border); border-radius: 2px; outline: none;
+  }
+  .vol-wrap input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 12px; height: 12px;
+    background: var(--accent); border-radius: 50%; cursor: pointer;
+  }
+  .vol-wrap input[type=range]::-moz-range-thumb {
+    width: 12px; height: 12px; background: var(--accent);
+    border-radius: 50%; cursor: pointer; border: 0;
+  }
+  .vol-label { font-size: 11px; color: var(--text-muted); width: 28px; text-align: right; }
+
+  /* ===== Main grid ===== */
+  #main {
+    position: relative; overflow: hidden; background: var(--bg);
+    display: grid; gap: 4px; padding: 4px;
+  }
+
+  /* ===== Frame (one grid cell) ===== */
+  .frame {
+    position: relative; border-radius: 6px; overflow: hidden;
+    min-height: 0; min-width: 0; border: 1px solid var(--border);
+    background: var(--panel); transition: border-color 0.15s;
+  }
+  .frame.focused { border-color: var(--accent); }
+
+  /* --- empty frame: per-slot URL input --- */
+  .frame.empty {
+    display: flex; align-items: center; justify-content: center; padding: 14px;
+    background: var(--panel);
+    background-image:
+      linear-gradient(var(--panel), var(--panel)),
+      repeating-linear-gradient(135deg, transparent 0 12px, rgba(255,255,255,0.012) 12px 24px);
+  }
+  .frame.empty .empty-inner {
+    width: 100%; max-width: 340px; display: flex; flex-direction: column;
+    gap: 10px; align-items: center; text-align: center;
+  }
+  .slot-index {
+    font-size: 11px; font-weight: 700; letter-spacing: 1px;
+    color: var(--text-muted); text-transform: uppercase;
+  }
+  .slot-form {
+    display: flex; width: 100%; gap: 6px;
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 4px 4px 4px 10px; transition: border-color 0.12s;
+  }
+  .slot-form:focus-within { border-color: var(--accent); }
+  .slot-form input {
+    flex: 1; min-width: 0; background: transparent; border: 0; outline: none;
+    color: var(--text); font-size: 13px; padding: 6px 0;
+  }
+  .slot-form input::placeholder { color: var(--text-muted); }
+  .slot-form button {
+    background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+    padding: 7px 14px; font-weight: 600; font-size: 13px; cursor: pointer;
+    white-space: nowrap; transition: background 0.1s;
+  }
+  .slot-form button:hover { background: var(--accent-hover); }
+  .slot-chat-toggle {
+    background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+    border-radius: 6px; padding: 7px 12px; font-size: 12px; cursor: pointer;
+    transition: all 0.12s;
+  }
+  .slot-chat-toggle:hover { color: #fff; border-color: var(--twitch); background: var(--twitch-soft); }
+  .slot-hint { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+
+  /* --- video frame --- */
+  .frame.video { background: #000; border-color: transparent; }
+  .frame.video.focused.platform-youtube { border-color: var(--youtube); }
+  .frame.video.focused.platform-twitch { border-color: var(--twitch); }
+  .frame .player-host { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .frame .player-host > div,
+  .frame .player-host iframe,
+  .frame.video iframe {
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 0; min-height: 0; border: 0; display: block;
+  }
+
+  .frame .header {
+    position: absolute; top: 0; left: 0; right: 0; height: 38px;
+    background: linear-gradient(180deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0) 100%);
+    display: flex; align-items: center; padding: 6px 8px; gap: 6px;
+    opacity: 0; transition: opacity 0.15s; z-index: 5;
+    pointer-events: none;
+  }
+  .frame.video:hover .header, .frame.video.focused .header { opacity: 1; pointer-events: auto; }
+  .frame.platform-twitch .footer,
+  .frame.platform-twitch .drag-handle { display: none; }
+  .frame .badge {
+    font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 3px;
+    color: #fff; letter-spacing: 0.5px;
+  }
+  .frame.platform-youtube .badge { background: var(--youtube); }
+  .frame.platform-twitch .badge { background: var(--twitch); }
+  .frame .title-text {
+    font-size: 12px; color: #fff; flex: 1; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; font-weight: 500;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+  }
+  .frame .head-btn {
+    background: rgba(0,0,0,0.55); border: 0; color: #fff; cursor: pointer;
+    width: 26px; height: 26px; border-radius: 4px; font-size: 13px;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background 0.1s;
+  }
+  .frame .head-btn:hover { background: rgba(255,255,255,0.2); }
+  .frame .head-btn.remove:hover { background: var(--danger); }
+
+  .frame .footer {
+    position: absolute; bottom: 0; left: 0; right: 0; height: 36px;
+    background: linear-gradient(0deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%);
+    display: flex; align-items: center; padding: 4px 8px; gap: 8px;
+    opacity: 0; transition: opacity 0.15s; z-index: 5;
+    pointer-events: none;
+  }
+  .frame.video:hover .footer, .frame.video.focused .footer { opacity: 1; pointer-events: auto; }
+  .frame .footer .pill {
+    background: rgba(0,0,0,0.55); color: #fff; font-size: 11px;
+    padding: 3px 8px; border-radius: 999px; cursor: pointer; border: 0;
+  }
+  .frame .footer .pill:hover { background: rgba(255,255,255,0.18); }
+  .frame .footer .pill.muted-pill { background: var(--accent); }
+  .frame .footer .vol-mini {
+    width: 70px; height: 3px; appearance: none; -webkit-appearance: none;
+    background: rgba(255,255,255,0.3); border-radius: 2px;
+  }
+  .frame .footer .vol-mini::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 10px; height: 10px;
+    background: #fff; border-radius: 50%; cursor: pointer;
+  }
+  .frame .footer .vol-mini::-moz-range-thumb {
+    width: 10px; height: 10px; background: #fff; border-radius: 50%; cursor: pointer; border: 0;
+  }
+
+  .frame .drag-handle {
+    position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    width: 36px; height: 4px; background: rgba(255,255,255,0.3); border-radius: 2px;
+    opacity: 0; transition: opacity 0.15s; cursor: grab; z-index: 6;
+  }
+  .frame.video:hover .drag-handle { opacity: 1; }
+  .frame.dragging { opacity: 0.5; }
+  .frame.drop-target::before {
+    content: ""; position: absolute; inset: 0; border: 2px dashed var(--accent);
+    border-radius: 6px; z-index: 4; pointer-events: none;
+  }
+
+  /* --- chat frame: shows another frame's stream chat --- */
+  .frame.chat-frame { display: flex; flex-direction: column; background: #0e0e12; }
+  .chat-head {
+    display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+    background: var(--panel); border-bottom: 1px solid var(--border); flex: 0 0 auto;
+  }
+  .chat-badge {
+    font-size: 10px; font-weight: 700; padding: 3px 7px; border-radius: 3px;
+    color: #fff; background: var(--twitch); letter-spacing: 0.5px; white-space: nowrap;
+  }
+  .chat-source {
+    flex: 1; min-width: 0; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 5px; padding: 5px 6px;
+    font-size: 12px; outline: none; cursor: pointer;
+  }
+  .chat-source:focus { border-color: var(--accent); }
+  .chat-head .head-btn {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim);
+    width: 28px; height: 28px; border-radius: 5px; cursor: pointer; font-size: 13px;
+    display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+    transition: all 0.1s;
+  }
+  .chat-head .head-btn:hover { color: #fff; border-color: var(--border-strong); }
+  .chat-head .head-btn.remove:hover { color: #fff; background: var(--danger); border-color: var(--danger); }
+  .chat-body { position: relative; flex: 1; min-height: 0; }
+  .chat-body iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .chat-empty {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; color: var(--text-muted); font-size: 12px; padding: 24px; line-height: 1.6;
+  }
+
+  /* layouts */
+  .layout-1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  .layout-2h { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+  .layout-2v { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+  .layout-3 { grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; }
+  .layout-3 > .frame:first-child { grid-row: span 2; }
+  .layout-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  .layout-5 { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 2fr 1fr; }
+  .layout-5 > .frame:first-child { grid-column: span 2; }
+  .layout-6 { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  .layout-8 { grid-template-columns: 1fr 1fr 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  .layout-9 { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; }
+  .layout-12 { grid-template-columns: 1fr 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; }
+  .layout-16 { grid-template-columns: 1fr 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr 1fr; }
+
+  /* toast */
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(60px);
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    padding: 10px 18px; border-radius: 8px; font-size: 13px; z-index: 1000;
+    opacity: 0; transition: all 0.25s; pointer-events: none;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.error { border-color: var(--danger); }
+  #toast.ok { border-color: var(--ok); }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+  /* mobile */
+  @media (max-width: 720px) {
+    #app { grid-template-rows: auto auto 1fr; }
+    #topbar { flex-wrap: wrap; padding: 8px; gap: 6px; height: auto; min-height: 52px; }
+    .topbar-hint { order: 99; flex: 1 1 100%; }
+    .logo { font-size: 13px; }
+    #toolbar { padding: 0 8px; gap: 4px; }
+    #toolbar .group { padding: 0 4px; }
+    #toolbar .group-label { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- ===== Topbar ===== -->
+  <div id="topbar">
+    <div class="logo">
+      <span class="yt"></span><span class="tw"></span>
+      <span>同時視聴</span>
+    </div>
+    <div class="topbar-hint">
+      <b>レイアウトを選択</b>して各枠を表示 → 各枠に URL を入力して配信を表示。
+      枠を <b>💬 チャット</b> に切り替えると、他の枠の配信のチャットを表示できます。
+    </div>
+    <button class="icon-btn server-btn" id="localServerBtn" title="ローカルサーバーで開く"><span class="ico">🌐</span><span>サーバー</span></button>
+    <button class="icon-btn" id="shareBtn" title="この構成のURLをコピー"><span class="ico">🔗</span></button>
+    <button class="icon-btn" id="fullscreenBtn" title="全画面 (F)"><span class="ico">⛶</span></button>
+    <button class="icon-btn" id="helpBtn" title="ヘルプ"><span class="ico">?</span></button>
+  </div>
+
+  <!-- ===== Toolbar ===== -->
+  <div id="toolbar">
+    <div class="group">
+      <span class="group-label">一括</span>
+      <button class="ctrl-btn primary" id="playAllBtn" title="すべて再生 (Space)"><span class="ico">▶</span> 再生</button>
+      <button class="ctrl-btn" id="pauseAllBtn" title="すべて一時停止"><span class="ico">⏸</span> 停止</button>
+      <button class="ctrl-btn" id="restartAllBtn" title="すべて先頭から (R)"><span class="ico">⏮</span> 先頭へ</button>
+    </div>
+    <div class="group">
+      <span class="group-label">音量</span>
+      <button class="ctrl-btn" id="muteAllBtn" title="すべてミュート (M)"><span class="ico">🔇</span> 全ミュート</button>
+      <button class="ctrl-btn" id="unmuteAllBtn" title="すべてミュート解除"><span class="ico">🔊</span> 解除</button>
+      <button class="ctrl-btn" id="soloBtn" title="フォーカスのみ音を出す">🎯 ソロ</button>
+      <div class="vol-wrap">
+        <input id="masterVol" type="range" min="0" max="100" value="50" title="マスター音量">
+        <span class="vol-label" id="masterVolLabel">50</span>
+      </div>
+    </div>
+    <div class="group">
+      <span class="group-label">同期</span>
+      <button class="ctrl-btn" id="syncBtn" title="再生位置を同期">⏱ シーク同期</button>
+    </div>
+    <div class="group">
+      <span class="group-label">レイアウト</span>
+      <div class="layout-tiles" id="layoutTiles"></div>
+    </div>
+    <div class="spacer" style="flex:1"></div>
+    <div class="group">
+      <button class="ctrl-btn" id="clearBtn" title="すべての枠を空にする"><span class="ico">🗑</span> 全クリア</button>
+      <span style="font-size: 12px; color: var(--text-muted); padding: 0 8px;" id="countLabel">0</span>
+    </div>
+  </div>
+
+  <!-- ===== Main ===== -->
+  <main id="main"></main>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ===== Constants & State =====
+const MAX_SLOTS = 16;
+const STORAGE_KEY = 'ymv_state_v3';
+const state = {
+  slots: [],           // fixed-length per layout; each slot is a frame
+  layout: '4',
+  focusedId: null,
+  soloMode: false,
+  masterVolume: 50,
+  ytApiReady: false,
+  twitchApiReady: false,
+  pendingPlayers: [],
+  fallbackMode: false,
+};
+
+// ===== Twitch parents (must include this page's hostname) =====
+function getTwitchParents() {
+  const set = new Set();
+  if (location.hostname) set.add(location.hostname);
+  set.add('localhost');
+  set.add('127.0.0.1');
+  return Array.from(set).filter(Boolean);
+}
+const TWITCH_PARENTS = getTwitchParents();
+
+// ===== DOM =====
+const $ = (id) => document.getElementById(id);
+const main = $('main');
+const countLabel = $('countLabel');
+const toast = $('toast');
+
+// ===== Embed environment =====
+const IS_FILE_PROTOCOL = location.protocol === 'file:';
+const HAS_VALID_ORIGIN = location.protocol === 'http:' || location.protocol === 'https:';
+
+// YouTube IFrame API
+window.onYouTubeIframeAPIReady = () => { state.ytApiReady = true; flushPending(); };
+(function loadYTApi() {
+  const tag = document.createElement('script');
+  tag.src = 'https://www.youtube.com/iframe_api';
+  tag.onerror = () => console.warn('Failed to load YouTube IFrame API');
+  document.head.appendChild(tag);
+})();
+
+// Twitch Embed API
+(function loadTwitchApi() {
+  const tag = document.createElement('script');
+  tag.src = 'https://player.twitch.tv/js/embed/v1.js';
+  tag.async = true;
+  tag.onload = () => { state.twitchApiReady = true; flushPending(); };
+  tag.onerror = () => console.warn('Failed to load Twitch Embed API');
+  document.head.appendChild(tag);
+})();
+
+function flushPending() {
+  const remaining = [];
+  for (const fn of state.pendingPlayers) {
+    if (fn() === false) remaining.push(fn);
+  }
+  state.pendingPlayers = remaining;
+}
+
+// Fallback after 6s if neither API has loaded
+setTimeout(() => {
+  if (!state.ytApiReady && !state.twitchApiReady && !state.fallbackMode) {
+    enterFallbackMode('プレーヤーAPIが応答しません。簡易モードで動作します（一括操作は使えません）。');
+  }
+}, 6000);
+
+function enterFallbackMode(msg) {
+  if (state.fallbackMode) return;
+  state.fallbackMode = true;
+  showToast(msg, 'warn');
+  ['playAllBtn','pauseAllBtn','restartAllBtn','muteAllBtn','unmuteAllBtn','soloBtn','syncBtn']
+    .forEach(id => { const b = $(id); if (b) b.disabled = true; });
+  renderGrid();
+}
+
+// ===== Layouts =====
+const LAYOUTS = [
+  { id: '1', cells: 1 }, { id: '2h', cells: 2 }, { id: '2v', cells: 2 },
+  { id: '3', cells: 3 }, { id: '4', cells: 4 }, { id: '5', cells: 5 },
+  { id: '6', cells: 6 }, { id: '8', cells: 8 }, { id: '9', cells: 9 },
+  { id: '12', cells: 12 }, { id: '16', cells: 16 },
+];
+function layoutCells(id) { const l = LAYOUTS.find(x => x.id === id); return l ? l.cells : 4; }
+function autoLayoutFor(n) {
+  if (n <= 1) return '1'; if (n === 2) return '2h'; if (n === 3) return '3';
+  if (n === 4) return '4'; if (n === 5) return '5'; if (n === 6) return '6';
+  if (n <= 8) return '8'; if (n <= 9) return '9'; if (n <= 12) return '12'; return '16';
+}
+
+function makeCell() { const d = document.createElement('div'); d.className = 'cell'; return d; }
+function renderLayoutTiles() {
+  const el = $('layoutTiles');
+  el.innerHTML = '';
+  for (const l of LAYOUTS) {
+    const t = document.createElement('button');
+    t.className = 'layout-tile' + (state.layout === l.id ? ' active' : '');
+    t.title = `${l.cells}枠`;
+    t.dataset.id = l.id;
+    if (l.id === '1') {
+      t.style.gridTemplateColumns = '1fr'; t.appendChild(makeCell());
+    } else if (l.id === '2h') {
+      t.style.gridTemplateColumns = '1fr 1fr'; t.appendChild(makeCell()); t.appendChild(makeCell());
+    } else if (l.id === '2v') {
+      t.style.gridTemplateRows = '1fr 1fr'; t.appendChild(makeCell()); t.appendChild(makeCell());
+    } else if (l.id === '3') {
+      t.style.gridTemplateColumns = '2fr 1fr'; t.style.gridTemplateRows = '1fr 1fr';
+      const big = makeCell(); big.style.gridRow = 'span 2'; t.appendChild(big);
+      t.appendChild(makeCell()); t.appendChild(makeCell());
+    } else if (l.id === '4') {
+      t.style.gridTemplateColumns = '1fr 1fr'; t.style.gridTemplateRows = '1fr 1fr';
+      for (let i = 0; i < 4; i++) t.appendChild(makeCell());
+    } else if (l.id === '5') {
+      t.style.gridTemplateColumns = '1fr 1fr 1fr'; t.style.gridTemplateRows = '2fr 1fr';
+      const big = makeCell(); big.style.gridColumn = 'span 2'; t.appendChild(big);
+      for (let i = 0; i < 4; i++) t.appendChild(makeCell());
+    } else if (l.id === '6') {
+      t.style.gridTemplateColumns = '1fr 1fr 1fr'; t.style.gridTemplateRows = '1fr 1fr';
+      for (let i = 0; i < 6; i++) t.appendChild(makeCell());
+    } else if (l.id === '8') {
+      t.style.gridTemplateColumns = '1fr 1fr 1fr 1fr'; t.style.gridTemplateRows = '1fr 1fr';
+      for (let i = 0; i < 8; i++) t.appendChild(makeCell());
+    } else if (l.id === '9') {
+      t.style.gridTemplateColumns = '1fr 1fr 1fr'; t.style.gridTemplateRows = '1fr 1fr 1fr';
+      for (let i = 0; i < 9; i++) t.appendChild(makeCell());
+    } else if (l.id === '12') {
+      t.style.gridTemplateColumns = '1fr 1fr 1fr 1fr'; t.style.gridTemplateRows = '1fr 1fr 1fr';
+      for (let i = 0; i < 12; i++) t.appendChild(makeCell());
+    } else if (l.id === '16') {
+      t.style.gridTemplateColumns = '1fr 1fr 1fr 1fr'; t.style.gridTemplateRows = '1fr 1fr 1fr 1fr';
+      for (let i = 0; i < 16; i++) t.appendChild(makeCell());
+    }
+    t.addEventListener('click', () => setLayout(l.id));
+    el.appendChild(t);
+  }
+}
+
+// ===== Parse =====
+// Returns { type:'youtube'|'twitch', kind:'video'|'channel'|'vod'|'clip', value } | null
+function parseEntry(raw) {
+  const s = (raw || '').trim();
+  if (!s) return null;
+  let m;
+  if ((m = s.match(/^(?:twitch|tw):(.+)$/i))) return { type: 'twitch', kind: 'channel', value: m[1].trim() };
+  if ((m = s.match(/^(?:youtube|yt):(.+)$/i))) return { type: 'youtube', kind: 'video', value: m[1].trim() };
+  if (/^[A-Za-z0-9_-]{11}$/.test(s)) return { type: 'youtube', kind: 'video', value: s };
+  try {
+    const url = new URL(s.startsWith('http') ? s : 'https://' + s);
+    const host = url.hostname.replace(/^www\./, '');
+    if (host === 'twitch.tv' || host.endsWith('.twitch.tv')) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      if (host === 'clips.twitch.tv' && parts[0]) return { type: 'twitch', kind: 'clip', value: parts[0] };
+      if (parts[0] === 'videos' && parts[1]) return { type: 'twitch', kind: 'vod', value: parts[1] };
+      if (parts.length >= 3 && parts[1] === 'clip') return { type: 'twitch', kind: 'clip', value: parts[2] };
+      if (parts[0]) return { type: 'twitch', kind: 'channel', value: parts[0] };
+    }
+    if (host === 'player.twitch.tv') {
+      const ch = url.searchParams.get('channel');
+      const vid = url.searchParams.get('video');
+      const clip = url.searchParams.get('clip');
+      if (ch) return { type: 'twitch', kind: 'channel', value: ch };
+      if (vid) return { type: 'twitch', kind: 'vod', value: vid };
+      if (clip) return { type: 'twitch', kind: 'clip', value: clip };
+    }
+    if (host === 'youtu.be') {
+      const id = url.pathname.split('/').filter(Boolean)[0];
+      if (id && /^[A-Za-z0-9_-]{11}$/.test(id)) return { type: 'youtube', kind: 'video', value: id };
+    }
+    if (host === 'youtube.com' || host.endsWith('.youtube.com') ||
+        host === 'youtube-nocookie.com' || host.endsWith('.youtube-nocookie.com')) {
+      const v = url.searchParams.get('v');
+      if (v && /^[A-Za-z0-9_-]{11}$/.test(v)) return { type: 'youtube', kind: 'video', value: v };
+      let m2;
+      if ((m2 = url.pathname.match(/^\/(?:live|embed|shorts|v)\/([A-Za-z0-9_-]{11})/))) {
+        return { type: 'youtube', kind: 'video', value: m2[1] };
+      }
+    }
+  } catch (e) {}
+  const ytm = s.match(/[A-Za-z0-9_-]{11}/);
+  if (ytm) return { type: 'youtube', kind: 'video', value: ytm[0] };
+  return null;
+}
+function parseInput(raw) {
+  const parts = (raw || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  const seen = new Set();
+  const entries = [];
+  for (const p of parts) {
+    const e = parseEntry(p);
+    if (!e) continue;
+    const key = `${e.type}:${e.kind}:${e.value.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    entries.push(e);
+  }
+  return entries;
+}
+
+// ===== Slot model =====
+function uuid() { return Math.random().toString(36).slice(2, 10); }
+function makeSlot() {
+  return {
+    id: uuid(),
+    mode: 'video',            // 'video' | 'chat'
+    type: null, kind: null, value: null, title: null,
+    ready: false, muted: true, volume: state.masterVolume,
+    player: null, audioPoll: null,
+    chatSourceId: null,       // for mode 'chat': id of the source slot
+  };
+}
+function isFilled(s) { return s.mode === 'video' && !!s.value; }
+function chattable(s) {
+  return isFilled(s) && (
+    (s.type === 'youtube' && s.kind === 'video' && HAS_VALID_ORIGIN) ||
+    (s.type === 'twitch' && s.kind === 'channel')
+  );
+}
+function availableChatSources(exceptId) {
+  return state.slots.filter(s => s.id !== exceptId && chattable(s));
+}
+function slotSig(s) {
+  if (s.mode === 'chat') return `chat:${s.chatSourceId || ''}`;
+  if (isFilled(s)) return `video:${s.type}:${s.kind}:${s.value}`;
+  return 'empty';
+}
+function defaultTitleFor(entry) {
+  if (entry.type === 'twitch') {
+    if (entry.kind === 'channel') return `Twitch: ${entry.value}`;
+    if (entry.kind === 'vod') return `Twitch VOD: ${entry.value}`;
+    if (entry.kind === 'clip') return `Twitch Clip: ${entry.value}`;
+  }
+  return entry.value;
+}
+function destroySlotPlayer(s) {
+  if (!s) return;
+  stopTwitchAudioPolling(s);
+  if (s.player && s.player.destroy) { try { s.player.destroy(); } catch (e) {} }
+  s.player = null; s.ready = false;
+}
+function resetSlot(s) {
+  destroySlotPlayer(s);
+  s.mode = 'video'; s.type = null; s.kind = null; s.value = null; s.title = null;
+  s.chatSourceId = null; s.muted = true;
+}
+
+// ===== Slot mutations =====
+function setLayout(id) {
+  const need = layoutCells(id);
+  if (need < state.slots.length) {
+    const removing = state.slots.slice(need);
+    const filled = removing.filter(s => isFilled(s) || (s.mode === 'chat' && s.chatSourceId)).length;
+    if (filled > 0 && !confirm(`このレイアウトでは ${filled} 個の枠が削除されます。続けますか？`)) return;
+    removing.forEach(destroySlotPlayer);
+    state.slots = state.slots.slice(0, need);
+  } else {
+    while (state.slots.length < need) state.slots.push(makeSlot());
+  }
+  state.layout = id;
+  renderLayoutTiles();
+  renderGrid();
+  save();
+}
+
+function applyEntryToSlot(s, e) {
+  destroySlotPlayer(s);
+  s.mode = 'video';
+  s.type = e.type; s.kind = e.kind; s.value = e.value;
+  s.title = defaultTitleFor(e);
+  s.ready = false; s.muted = true; s.chatSourceId = null;
+  if (typeof s.volume !== 'number') s.volume = state.masterVolume;
+}
+function fillSlot(id, raw) {
+  const entries = parseInput(raw);
+  if (!entries.length) { showToast('有効な URL / ID が見つかりません', 'error'); return; }
+  const s = state.slots.find(x => x.id === id);
+  if (!s) return;
+  applyEntryToSlot(s, entries[0]);
+  // extra pasted lines spill into remaining empty slots
+  for (let i = 1; i < entries.length; i++) {
+    const slot = state.slots.find(x => x.id !== id && !isFilled(x) && x.mode === 'video');
+    if (!slot) break;
+    applyEntryToSlot(slot, entries[i]);
+  }
+  renderGrid(); save(); fetchTitles();
+}
+function fillFirstEmpty(raw) {
+  const entries = parseInput(raw);
+  if (!entries.length) { showToast('URL / ID が見つかりません', 'error'); return; }
+  let placed = 0;
+  for (const e of entries) {
+    const slot = state.slots.find(s => !isFilled(s) && s.mode === 'video');
+    if (!slot) { showToast('空き枠がありません', 'warn'); break; }
+    applyEntryToSlot(slot, e);
+    placed++;
+  }
+  if (placed) { renderGrid(); save(); fetchTitles(); showToast(`${placed}件を空き枠に追加しました`, 'ok'); }
+}
+function emptySlot(id) {
+  const s = state.slots.find(x => x.id === id);
+  if (!s) return;
+  resetSlot(s);
+  state.slots.forEach(o => { if (o.mode === 'chat' && o.chatSourceId === id) o.chatSourceId = null; });
+  renderGrid(); save();
+}
+function setSlotChat(id) {
+  const s = state.slots.find(x => x.id === id);
+  if (!s) return;
+  destroySlotPlayer(s);
+  s.mode = 'chat'; s.type = null; s.kind = null; s.value = null; s.title = null;
+  const src = availableChatSources(id)[0];
+  s.chatSourceId = src ? src.id : null;
+  renderGrid(); save();
+  if (!src) showToast('他の枠に配信を追加すると、その配信のチャットを選べます', 'warn');
+}
+function setChatSource(id, sourceId) {
+  const s = state.slots.find(x => x.id === id);
+  if (!s) return;
+  s.chatSourceId = sourceId || null;
+  renderGrid(); save();
+}
+function moveSlot(fromId, toId, after) {
+  const from = state.slots.findIndex(s => s.id === fromId);
+  if (from < 0) return;
+  const [item] = state.slots.splice(from, 1);
+  let to = state.slots.findIndex(s => s.id === toId);
+  if (to < 0) { state.slots.splice(from, 0, item); return; }
+  if (after) to += 1;
+  state.slots.splice(to, 0, item);
+  renderGrid(); save();
+}
+function focusSlot(id) {
+  state.focusedId = state.focusedId === id ? null : id;
+  if (state.soloMode) applySoloState();
+  document.querySelectorAll('.frame.video').forEach(el => {
+    el.classList.toggle('focused', el.dataset.id === state.focusedId);
+  });
+}
+
+// ===== Title fetch (YouTube oEmbed only) =====
+async function fetchTitles() {
+  for (const s of state.slots) {
+    if (!isFilled(s) || s.type !== 'youtube' || s.kind !== 'video') continue;
+    if (s.title && s.title !== s.value) continue;
+    try {
+      const r = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${s.value}&format=json`);
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (data && data.title) {
+        s.title = data.title;
+        const titleEl = document.querySelector(`.frame[data-id="${s.id}"] .title-text`);
+        if (titleEl) titleEl.textContent = data.title;
+      }
+    } catch (e) {}
+  }
+  refreshChatSelects();
+  save();
+}
+
+// ===== Helpers =====
+function externalUrlFor(s) {
+  if (s.type === 'youtube') return `https://www.youtube.com/watch?v=${s.value}`;
+  if (s.type === 'twitch') {
+    if (s.kind === 'vod') return `https://www.twitch.tv/videos/${s.value}`;
+    if (s.kind === 'clip') return `https://clips.twitch.tv/${s.value}`;
+    return `https://www.twitch.tv/${s.value}`;
+  }
+  return '#';
+}
+function badgeText(s) {
+  if (s.type === 'youtube') return 'YT';
+  if (s.type === 'twitch') return s.kind === 'vod' ? 'TW VOD' : s.kind === 'clip' ? 'TW CLIP' : 'TW';
+  return '';
+}
+function chatSrcFor(s) {
+  if (s.type === 'youtube') {
+    return `https://www.youtube.com/live_chat?v=${encodeURIComponent(s.value)}&embed_domain=${encodeURIComponent(location.hostname)}&dark_theme=1`;
+  }
+  if (s.type === 'twitch') {
+    const parents = TWITCH_PARENTS.map(p => `parent=${encodeURIComponent(p)}`).join('&');
+    return `https://www.twitch.tv/embed/${encodeURIComponent(s.value)}/chat?darkpopout&${parents}`;
+  }
+  return '';
+}
+
+// ===== Rendering =====
+function renderGrid() {
+  // prune dangling chat references
+  state.slots.forEach(s => {
+    if (s.mode === 'chat' && s.chatSourceId) {
+      const src = state.slots.find(x => x.id === s.chatSourceId);
+      if (!src || !chattable(src)) s.chatSourceId = null;
+    }
+  });
+
+  main.className = `layout-${state.layout}`;
+
+  const existing = new Map();
+  Array.from(main.children).forEach(c => { if (c.dataset.id) existing.set(c.dataset.id, c); });
+  const frag = document.createDocumentFragment();
+
+  state.slots.forEach((s, i) => {
+    const old = existing.get(s.id);
+    let el;
+    if (old && old.dataset.sig === slotSig(s)) {
+      el = old; existing.delete(s.id);
+      updateFrameMeta(el, s, i);
+    } else {
+      el = createFrameEl(s, i);
+    }
+    el.classList.toggle('focused', state.focusedId === s.id && isFilled(s));
+    frag.appendChild(el);
+  });
+
+  existing.forEach(el => el.remove());
+  main.innerHTML = '';
+  main.appendChild(frag);
+
+  refreshChatSelects();
+  const filled = state.slots.filter(isFilled).length;
+  countLabel.textContent = `${filled} / ${state.slots.length} 枠`;
+}
+
+function createFrameEl(s, i) {
+  if (s.mode === 'chat') return buildChatFrame(s);
+  if (isFilled(s)) return buildVideoFrame(s);
+  return buildEmptyFrame(s, i);
+}
+
+function updateFrameMeta(el, s, i) {
+  if (s.mode === 'video' && isFilled(s)) {
+    const t = el.querySelector('.title-text');
+    if (t) t.textContent = s.title || s.value;
+  } else if (s.mode === 'video') {
+    const n = el.querySelector('.slot-index');
+    if (n) n.textContent = `枠 ${i + 1}`;
+  }
+}
+
+function buildEmptyFrame(s, i) {
+  const el = document.createElement('div');
+  el.className = 'frame empty';
+  el.dataset.id = s.id;
+  el.dataset.sig = 'empty';
+  el.innerHTML = `
+    <div class="empty-inner">
+      <div class="slot-index">枠 ${i + 1}</div>
+      <form class="slot-form">
+        <input class="slot-url" type="text" placeholder="YouTube / Twitch の URL・ID" autocomplete="off" spellcheck="false">
+        <button type="submit">表示</button>
+      </form>
+      <button class="slot-chat-toggle" type="button">💬 この枠にチャットを表示</button>
+      <div class="slot-hint">youtu.be/… ・ youtube.com/watch?v=… ・ twitch.tv/ch</div>
+    </div>`;
+  const form = el.querySelector('.slot-form');
+  const input = el.querySelector('.slot-url');
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    const val = input.value.trim();
+    if (val) fillSlot(s.id, val);
+  });
+  el.querySelector('.slot-chat-toggle').addEventListener('click', () => setSlotChat(s.id));
+  return el;
+}
+
+function buildVideoFrame(s) {
+  const el = document.createElement('div');
+  el.className = `frame video platform-${s.type}`;
+  el.dataset.id = s.id;
+  el.dataset.sig = slotSig(s);
+  el.innerHTML = `
+    <div class="drag-handle" draggable="true" title="ドラッグで並び替え"></div>
+    <div class="player-host"><div id="player-${s.id}"></div></div>
+    <div class="header">
+      <span class="badge"></span>
+      <span class="title-text"></span>
+      <button class="head-btn extlink" title="元のページで開く">↗</button>
+      <button class="head-btn remove" title="この枠を空にする">×</button>
+    </div>
+    <div class="footer">
+      <button class="pill mute-pill" title="ミュート切替">🔇</button>
+      <input type="range" class="vol-mini" min="0" max="100" value="${s.volume}" title="音量">
+      <span style="flex:1"></span>
+      <button class="pill restart-pill" title="先頭から">⏮</button>
+      <button class="pill play-pill" title="再生/停止">▶</button>
+    </div>`;
+  el.querySelector('.badge').textContent = badgeText(s);
+  el.querySelector('.title-text').textContent = s.title || s.value;
+  if (s.type === 'twitch' && s.kind === 'channel') el.querySelector('.restart-pill').style.display = 'none';
+
+  el.querySelector('.remove').addEventListener('click', e => { e.stopPropagation(); emptySlot(s.id); });
+  el.querySelector('.extlink').addEventListener('click', e => { e.stopPropagation(); window.open(externalUrlFor(s), '_blank', 'noopener'); });
+  el.querySelector('.mute-pill').addEventListener('click', e => { e.stopPropagation(); toggleMute(s.id); });
+  el.querySelector('.play-pill').addEventListener('click', e => { e.stopPropagation(); togglePlay(s.id); });
+  el.querySelector('.restart-pill').addEventListener('click', e => { e.stopPropagation(); seek(s.id, 0); playOne(s.id); });
+  el.querySelector('.vol-mini').addEventListener('input', e => { e.stopPropagation(); setVolume(s.id, parseInt(e.target.value, 10)); });
+  el.addEventListener('click', () => focusSlot(s.id));
+
+  const handle = el.querySelector('.drag-handle');
+  handle.addEventListener('dragstart', e => {
+    el.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', 'slot:' + s.id);
+  });
+  handle.addEventListener('dragend', () => el.classList.remove('dragging'));
+  el.addEventListener('dragover', e => {
+    if (e.dataTransfer.types.includes('text/plain')) { e.preventDefault(); el.classList.add('drop-target'); }
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('drop-target'));
+  el.addEventListener('drop', e => {
+    el.classList.remove('drop-target');
+    const data = e.dataTransfer.getData('text/plain');
+    if (data && data.startsWith('slot:')) {
+      e.preventDefault(); e.stopPropagation();
+      const fromId = data.slice(5);
+      if (fromId !== s.id) {
+        const r = el.getBoundingClientRect();
+        const after = (e.clientX - r.left) > r.width / 2;
+        moveSlot(fromId, s.id, after);
+      }
+    }
+  });
+
+  scheduleMount(s, el);
+  return el;
+}
+
+function buildChatFrame(s) {
+  const el = document.createElement('div');
+  el.className = 'frame chat-frame';
+  el.dataset.id = s.id;
+  el.dataset.sig = slotSig(s);
+  el.innerHTML = `
+    <div class="chat-head">
+      <span class="chat-badge">💬 CHAT</span>
+      <select class="chat-source" title="チャットを表示する配信を選択"></select>
+      <button class="head-btn remove" title="この枠を空にする">×</button>
+    </div>
+    <div class="chat-body"></div>`;
+  const sel = el.querySelector('.chat-source');
+  populateChatSelect(sel, s);
+  sel.addEventListener('change', () => setChatSource(s.id, sel.value));
+  el.querySelector('.remove').addEventListener('click', () => emptySlot(s.id));
+
+  const body = el.querySelector('.chat-body');
+  const src = s.chatSourceId ? state.slots.find(x => x.id === s.chatSourceId) : null;
+  if (src && chattable(src)) {
+    const iframe = document.createElement('iframe');
+    iframe.src = chatSrcFor(src);
+    iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+    body.appendChild(iframe);
+  } else {
+    const m = document.createElement('div');
+    m.className = 'chat-empty';
+    m.textContent = availableChatSources(s.id).length
+      ? '上のメニューから、チャットを表示する配信を選んでください'
+      : '他の枠に YouTube ライブ / Twitch チャンネルを追加すると、ここにそのチャットを表示できます';
+    body.appendChild(m);
+  }
+  return el;
+}
+
+function populateChatSelect(sel, s) {
+  const sources = availableChatSources(s.id);
+  sel.innerHTML = '';
+  const ph = document.createElement('option');
+  ph.value = '';
+  ph.textContent = sources.length ? '配信を選択…' : '（他の枠に配信がありません）';
+  sel.appendChild(ph);
+  sources.forEach(src => {
+    const o = document.createElement('option');
+    o.value = src.id;
+    o.textContent = src.title || src.value;
+    sel.appendChild(o);
+  });
+  sel.value = (s.chatSourceId && sources.some(x => x.id === s.chatSourceId)) ? s.chatSourceId : '';
+}
+function refreshChatSelects() {
+  state.slots.forEach(s => {
+    if (s.mode !== 'chat') return;
+    const sel = main.querySelector(`.frame[data-id="${s.id}"] .chat-source`);
+    if (sel) populateChatSelect(sel, s);
+  });
+}
+
+// ===== Player mounting =====
+function scheduleMount(s, el) {
+  if (state.fallbackMode) { mountFallbackIframe(s, el); return; }
+  const tryMount = () => {
+    if (s.type === 'youtube') {
+      if (state.ytApiReady && window.YT && window.YT.Player) { mountYouTubePlayer(s, el); return true; }
+      return false;
+    }
+    if (s.type === 'twitch') { mountFallbackIframe(s, el); return true; }
+    return true;
+  };
+  if (!tryMount()) state.pendingPlayers.push(tryMount);
+}
+
+function ytErrorMessage(code) {
+  switch (code) {
+    case 2:   return '無効な動画IDです';
+    case 5:   return 'HTML5プレーヤーで再生できません';
+    case 100: return '動画が見つかりません（削除/非公開）';
+    case 101:
+    case 150: return 'この動画は埋め込みが許可されていません';
+    default:  return `読み込みエラー (code ${code})`;
+  }
+}
+
+function mountYouTubePlayer(s, el) {
+  const host = el.querySelector(`#player-${s.id}`);
+  if (!host) return;
+  const playerVars = { autoplay: 1, mute: 1, playsinline: 1, rel: 0, modestbranding: 1, enablejsapi: 1 };
+  if (HAS_VALID_ORIGIN) playerVars.origin = location.origin;
+  try {
+    s.player = new YT.Player(host, {
+      videoId: s.value,
+      host: 'https://www.youtube-nocookie.com',
+      playerVars,
+      events: {
+        onReady: (e) => {
+          s.ready = true;
+          try { if (s.muted) e.target.mute(); else e.target.unMute(); e.target.setVolume(s.volume); } catch (err) {}
+          updateMutePill(s.id);
+        },
+        onStateChange: (e) => {
+          if (e.data === YT.PlayerState.PLAYING) updatePlayPill(s.id, true);
+          else if (e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED) updatePlayPill(s.id, false);
+        },
+        onError: (e) => { console.warn('YT error', e.data, s.value); showVideoError(s.id, ytErrorMessage(e.data)); },
+      },
+    });
+  } catch (err) {
+    console.error('Failed to create YT.Player, falling back to iframe', err);
+    mountFallbackIframe(s, el);
+  }
+}
+
+function mountFallbackIframe(s, el) {
+  const host = el.querySelector('.player-host');
+  if (!host) return;
+  let src = '';
+  if (s.type === 'youtube') {
+    src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(s.value)}?autoplay=1&mute=1&playsinline=1&rel=0&modestbranding=1`;
+  } else if (s.type === 'twitch') {
+    const parents = TWITCH_PARENTS.map(p => `parent=${encodeURIComponent(p)}`).join('&');
+    const muted = s.muted ? 'true' : 'false';
+    if (s.kind === 'vod') src = `https://player.twitch.tv/?video=${encodeURIComponent(s.value)}&${parents}&muted=${muted}&autoplay=true`;
+    else if (s.kind === 'clip') src = `https://clips.twitch.tv/embed?clip=${encodeURIComponent(s.value)}&autoplay=true&muted=${muted}&${parents}`;
+    else src = `https://player.twitch.tv/?channel=${encodeURIComponent(s.value)}&${parents}&muted=${muted}&autoplay=true`;
+  }
+  host.innerHTML = '';
+  const iframe = document.createElement('iframe');
+  iframe.src = src;
+  iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
+  iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+  iframe.allowFullscreen = true;
+  host.appendChild(iframe);
+  s.ready = false; s.player = null;
+}
+
+function showVideoError(id, msg) {
+  const el = document.querySelector(`.frame[data-id="${id}"]`);
+  if (!el) return;
+  const s = state.slots.find(x => x.id === id);
+  const label = s ? defaultTitleFor(s) : '';
+  const url = s ? externalUrlFor(s) : '#';
+  const host = el.querySelector('.player-host');
+  if (host) {
+    host.innerHTML = '';
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#1a1a20;color:var(--text-dim);padding:20px;text-align:center;gap:10px;';
+    wrap.innerHTML = `
+      <div style="font-size:32px;">⚠️</div>
+      <div style="font-size:13px;color:var(--text);"></div>
+      <div style="font-size:11px;color:var(--text-muted);"></div>`;
+    wrap.children[1].textContent = msg;
+    wrap.children[2].textContent = label;
+    const btn = document.createElement('button');
+    btn.style.cssText = 'margin-top:8px;padding:6px 14px;background:var(--accent);color:#fff;border:0;border-radius:5px;cursor:pointer;font-size:12px;';
+    btn.textContent = '元のページで開く';
+    btn.addEventListener('click', () => window.open(url, '_blank', 'noopener'));
+    wrap.appendChild(btn);
+    host.appendChild(wrap);
+  }
+  const titleEl = el.querySelector('.title-text');
+  if (titleEl) titleEl.textContent = `[エラー] ${msg}`;
+}
+
+// ===== Twitch audio (player API only) =====
+function syncTwitchAudio(s, retry = true) {
+  if (!s?.player || s.type !== 'twitch') return;
+  const volume = Math.max(0, Math.min(100, Number.isFinite(s.volume) ? s.volume : state.masterVolume));
+  try { s.player.setVolume(volume / 100); s.player.setMuted(s.muted || volume === 0); } catch (e) {}
+  if (retry) { setTimeout(() => syncTwitchAudio(s, false), 150); setTimeout(() => syncTwitchAudio(s, false), 500); }
+}
+function readTwitchAudio(s) {
+  if (!s?.player || s.type !== 'twitch') return;
+  try {
+    const nextMuted = !!s.player.getMuted();
+    const nextVolume = Math.round(Math.max(0, Math.min(1, s.player.getVolume())) * 100);
+    let changed = false;
+    if (nextMuted !== s.muted) { s.muted = nextMuted; updateMutePill(s.id); changed = true; }
+    const slider = document.querySelector(`.frame[data-id="${s.id}"] .vol-mini`);
+    if (document.activeElement !== slider && Number.isFinite(nextVolume) && nextVolume !== s.volume) {
+      s.volume = nextVolume; if (slider) slider.value = nextVolume; changed = true;
+    }
+    if (changed) save();
+  } catch (e) {}
+}
+function startTwitchAudioPolling(s) {
+  if (!s || s.type !== 'twitch' || s.audioPoll) return;
+  readTwitchAudio(s);
+  s.audioPoll = setInterval(() => readTwitchAudio(s), 700);
+}
+function stopTwitchAudioPolling(s) {
+  if (!s?.audioPoll) return;
+  clearInterval(s.audioPoll); s.audioPoll = null;
+}
+
+// ===== Player adapter =====
+const Adapter = {
+  play(s)  { if (!s.player) return; try { if (s.type === 'youtube') s.player.playVideo(); else if (s.type === 'twitch') s.player.play(); } catch (e) {} },
+  pause(s) { if (!s.player) return; try { if (s.type === 'youtube') s.player.pauseVideo(); else if (s.type === 'twitch') s.player.pause(); } catch (e) {} },
+  mute(s)  { if (!s.player) return; try { if (s.type === 'youtube') s.player.mute(); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
+  unmute(s){ if (!s.player) return; try { if (s.type === 'youtube') s.player.unMute(); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
+  setVolume(s, val) { if (!s.player) return; try { if (s.type === 'youtube') s.player.setVolume(val); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
+  seek(s, sec) { if (!s.player) return; try { if (s.type === 'youtube') s.player.seekTo(sec, true); else if (s.type === 'twitch') s.player.seek(sec); } catch (e) {} },
+  getCurrentTime(s) {
+    if (!s.player) return null;
+    try {
+      if (s.type === 'youtube' && s.player.getCurrentTime) return s.player.getCurrentTime();
+      if (s.type === 'twitch' && s.player.getCurrentTime) return s.player.getCurrentTime();
+    } catch (e) {}
+    return null;
+  },
+  isPlaying(s) {
+    if (!s.player) return false;
+    try {
+      if (s.type === 'youtube' && s.player.getPlayerState) return s.player.getPlayerState() === YT.PlayerState.PLAYING;
+      if (s.type === 'twitch' && s.player.isPaused) return !s.player.isPaused();
+    } catch (e) {}
+    return false;
+  },
+  canSeek(s) {
+    if (s.type === 'youtube') return s.kind === 'video';
+    if (s.type === 'twitch') return s.kind === 'vod' || s.kind === 'clip';
+    return false;
+  },
+};
+
+// ===== Per-frame controls =====
+function updateMutePill(id) {
+  const s = state.slots.find(x => x.id === id);
+  const el = document.querySelector(`.frame[data-id="${id}"] .mute-pill`);
+  if (!el || !s) return;
+  el.textContent = s.muted ? '🔇' : '🔊';
+  el.classList.toggle('muted-pill', s.muted);
+}
+function updatePlayPill(id, playing) {
+  const el = document.querySelector(`.frame[data-id="${id}"] .play-pill`);
+  if (el) el.textContent = playing ? '⏸' : '▶';
+}
+function toggleMute(id) {
+  const s = state.slots.find(x => x.id === id);
+  if (!s) return;
+  s.muted = !s.muted;
+  if (!s.muted && s.volume === 0) {
+    s.volume = state.masterVolume > 0 ? state.masterVolume : 50;
+    const slider = document.querySelector(`.frame[data-id="${s.id}"] .vol-mini`);
+    if (slider) slider.value = s.volume;
+  }
+  s.muted ? Adapter.mute(s) : Adapter.unmute(s);
+  updateMutePill(id); save();
+}
+function setVolume(id, val) {
+  const s = state.slots.find(x => x.id === id);
+  if (!s) return;
+  s.volume = val;
+  if (val > 0 && s.muted) { s.muted = false; Adapter.unmute(s); updateMutePill(id); }
+  else if (val === 0 && !s.muted) { s.muted = true; Adapter.mute(s); updateMutePill(id); }
+  Adapter.setVolume(s, val); save();
+}
+function seek(id, sec)    { const s = state.slots.find(x => x.id === id); if (s) Adapter.seek(s, sec); }
+function playOne(id)      { const s = state.slots.find(x => x.id === id); if (s) Adapter.play(s); }
+function togglePlay(id)   { const s = state.slots.find(x => x.id === id); if (!s) return; Adapter.isPlaying(s) ? Adapter.pause(s) : Adapter.play(s); }
+
+// ===== Bulk controls (operate on filled video slots) =====
+function filledVideos() { return state.slots.filter(isFilled); }
+function playAll()  { filledVideos().forEach(s => Adapter.play(s)); }
+function pauseAll() { filledVideos().forEach(s => Adapter.pause(s)); }
+function isAnyPlaying() { return filledVideos().some(s => Adapter.isPlaying(s)); }
+function muteAll()   { filledVideos().forEach(s => { s.muted = true;  Adapter.mute(s);   updateMutePill(s.id); }); save(); }
+function unmuteAll() { filledVideos().forEach(s => { s.muted = false; Adapter.unmute(s); updateMutePill(s.id); }); save(); }
+function restartAll() { filledVideos().forEach(s => { if (Adapter.canSeek(s)) Adapter.seek(s, 0); Adapter.play(s); }); }
+function syncSeek() {
+  const list = filledVideos();
+  const target = list.find(s => s.id === state.focusedId) || list.find(s => Adapter.canSeek(s));
+  if (!target || !Adapter.canSeek(target)) { showToast('シーク同期できる動画がありません（ライブ配信は同期不可）', 'warn'); return; }
+  const t = Adapter.getCurrentTime(target);
+  if (t == null) { showToast('再生位置を取得できません', 'warn'); return; }
+  list.forEach(s => { if (s.id !== target.id && Adapter.canSeek(s)) Adapter.seek(s, t); });
+  showToast(`${t.toFixed(1)}秒に同期しました`, 'ok');
+}
+function applySoloState() {
+  if (!state.soloMode) return;
+  filledVideos().forEach(s => {
+    const shouldHear = state.focusedId === s.id;
+    s.muted = !shouldHear;
+    shouldHear ? Adapter.unmute(s) : Adapter.mute(s);
+    updateMutePill(s.id);
+  });
+  save();
+}
+function toggleSolo() {
+  state.soloMode = !state.soloMode;
+  $('soloBtn').classList.toggle('active', state.soloMode);
+  if (state.soloMode) {
+    const list = filledVideos();
+    if (!state.focusedId && list[0]) state.focusedId = list[0].id;
+    document.querySelectorAll('.frame.video').forEach(el => el.classList.toggle('focused', el.dataset.id === state.focusedId));
+    applySoloState();
+    showToast('ソロモード ON: フォーカスした枠のみ音が出ます', 'ok');
+  } else {
+    showToast('ソロモード OFF', 'ok');
+  }
+}
+function setMasterVolume(val) {
+  state.masterVolume = val;
+  $('masterVolLabel').textContent = val;
+  filledVideos().forEach(s => {
+    s.volume = val;
+    Adapter.setVolume(s, val);
+    const slider = document.querySelector(`.frame[data-id="${s.id}"] .vol-mini`);
+    if (slider) slider.value = val;
+  });
+  save();
+}
+
+// ===== Persistence =====
+function snapshot() {
+  return {
+    slots: state.slots.map(s => ({
+      mode: s.mode,
+      type: s.type, kind: s.kind, value: s.value, title: s.title,
+      muted: s.muted, volume: s.volume,
+      chatIndex: (s.mode === 'chat' && s.chatSourceId) ? state.slots.findIndex(x => x.id === s.chatSourceId) : null,
+    })),
+    layout: state.layout,
+    masterVolume: state.masterVolume,
+    soloMode: state.soloMode,
+  };
+}
+function save() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot())); } catch (e) {} }
+function load() {
+  const hash = location.hash.replace(/^#/, '');
+  if (hash) {
+    try { hydrate(JSON.parse(decodeURIComponent(atob(hash)))); return; } catch (e) {}
+  }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) { hydrate(JSON.parse(raw)); return; }
+    // migrate older formats
+    const old = localStorage.getItem('ymv_state_v2') || localStorage.getItem('ymv_state_v1');
+    if (old) {
+      const data = JSON.parse(old);
+      if (data && Array.isArray(data.videos) && data.videos[0] && data.videos[0].videoId) {
+        data.videos = data.videos.map(v => ({ type: 'youtube', kind: 'video', value: v.videoId, title: v.title, muted: v.muted, volume: v.volume }));
+      }
+      hydrate(data);
+    }
+  } catch (e) {}
+}
+function hydrate(data) {
+  if (!data) return;
+  if (Array.isArray(data.slots)) {
+    state.layout = data.layout || '4';
+    state.slots = data.slots.map(o => {
+      const s = makeSlot();
+      s.mode = o.mode === 'chat' ? 'chat' : 'video';
+      s.type = o.type || null; s.kind = o.kind || null; s.value = o.value || null;
+      s.title = o.title || o.value || null;
+      s.muted = o.muted !== false;
+      s.volume = typeof o.volume === 'number' ? o.volume : state.masterVolume;
+      s._ci = (typeof o.chatIndex === 'number') ? o.chatIndex : null;
+      return s;
+    });
+    state.slots.forEach(s => {
+      if (s._ci != null && state.slots[s._ci]) s.chatSourceId = state.slots[s._ci].id;
+      delete s._ci;
+    });
+  } else if (Array.isArray(data.videos)) {
+    const lay = (data.layout && data.layout !== 'auto') ? data.layout : autoLayoutFor(data.videos.length);
+    state.layout = lay;
+    const need = layoutCells(lay);
+    state.slots = [];
+    for (let i = 0; i < need; i++) {
+      const s = makeSlot();
+      const v = data.videos[i];
+      if (v) {
+        s.type = v.type || 'youtube';
+        s.kind = v.kind || (s.type === 'youtube' ? 'video' : 'channel');
+        s.value = v.value || v.videoId || null;
+        s.title = v.title || s.value;
+        s.muted = v.muted !== false;
+        s.volume = typeof v.volume === 'number' ? v.volume : state.masterVolume;
+      }
+      state.slots.push(s);
+    }
+  }
+  // normalize count to layout
+  const need = layoutCells(state.layout);
+  while (state.slots.length < need) state.slots.push(makeSlot());
+  if (state.slots.length > need) state.slots = state.slots.slice(0, need);
+
+  if (typeof data.masterVolume === 'number') {
+    state.masterVolume = data.masterVolume;
+    $('masterVol').value = data.masterVolume;
+    $('masterVolLabel').textContent = data.masterVolume;
+  }
+  if (data.soloMode) { state.soloMode = true; $('soloBtn').classList.add('active'); }
+}
+
+// ===== Toast =====
+let toastTimer = null;
+function showToast(msg, type = '') {
+  toast.className = '';
+  toast.classList.add(type);
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 2400);
+}
+
+// ===== Events =====
+$('playAllBtn').addEventListener('click', playAll);
+$('pauseAllBtn').addEventListener('click', pauseAll);
+$('restartAllBtn').addEventListener('click', restartAll);
+$('muteAllBtn').addEventListener('click', muteAll);
+$('unmuteAllBtn').addEventListener('click', unmuteAll);
+$('soloBtn').addEventListener('click', toggleSolo);
+$('syncBtn').addEventListener('click', syncSeek);
+$('masterVol').addEventListener('input', e => setMasterVolume(parseInt(e.target.value, 10)));
+
+$('clearBtn').addEventListener('click', () => {
+  const used = state.slots.filter(s => isFilled(s) || s.mode === 'chat').length;
+  if (used === 0) return;
+  if (confirm('すべての枠を空にしますか？（レイアウトは保持されます）')) {
+    state.slots.forEach(resetSlot);
+    state.focusedId = null;
+    renderGrid(); save();
+  }
+});
+
+$('localServerBtn').addEventListener('click', () => {
+  const serverUrl = new URL('http://127.0.0.1:8765/index.html');
+  serverUrl.hash = location.hash;
+  if (location.hostname === '127.0.0.1' && location.port === '8765') {
+    showToast('すでにローカルサーバーで接続中です', 'ok');
+    return;
+  }
+  window.location.href = serverUrl.toString();
+});
+
+$('shareBtn').addEventListener('click', () => {
+  if (state.slots.every(s => !isFilled(s) && s.mode !== 'chat')) {
+    showToast('共有する内容がありません', 'warn');
+    return;
+  }
+  const hash = btoa(encodeURIComponent(JSON.stringify(snapshot())));
+  const url = `${location.origin}${location.pathname}#${hash}`;
+  navigator.clipboard.writeText(url).then(() => showToast('共有URLをコピーしました', 'ok')).catch(() => prompt('共有URL:', url));
+});
+
+$('fullscreenBtn').addEventListener('click', () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen();
+});
+
+$('helpBtn').addEventListener('click', () => {
+  alert([
+    '【YouTube + Twitch 同時視聴ビューワー】',
+    '',
+    '■ 基本の流れ',
+    '1) ツールバーでレイアウトを選ぶと、その数だけ枠が表示されます',
+    '2) 各枠に URL / ID を入力 →「表示」で配信を再生',
+    '3) 枠を「💬 チャットを表示」にすると、他の枠の配信のチャットを表示',
+    '',
+    '■ チャット枠',
+    '・空き枠の「💬 この枠にチャットを表示」をクリック',
+    '・上部のメニューで、表示したい配信（他の枠）を選択',
+    '・対応: YouTube ライブ / Twitch チャンネル',
+    '',
+    '■ ショートカット',
+    '・Space : すべて再生 / 一時停止',
+    '・M     : 全ミュート / 解除',
+    '・R     : すべて先頭から',
+    '・F     : 全画面',
+    '・S     : ソロモード',
+    '・1〜9  : レイアウト変更',
+    '・Del   : フォーカス中の枠を空にする',
+  ].join('\n'));
+});
+
+// keyboard shortcuts
+const NUM_LAYOUT = { '1': '1', '2': '2h', '3': '3', '4': '4', '5': '5', '6': '6', '8': '8', '9': '9' };
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  switch (e.key) {
+    case ' ':
+      e.preventDefault();
+      isAnyPlaying() ? pauseAll() : playAll();
+      break;
+    case 'm': case 'M':
+      e.preventDefault();
+      filledVideos().every(s => s.muted) ? unmuteAll() : muteAll();
+      break;
+    case 'r': case 'R': e.preventDefault(); restartAll(); break;
+    case 'f': case 'F': e.preventDefault(); $('fullscreenBtn').click(); break;
+    case 's': case 'S': e.preventDefault(); toggleSolo(); break;
+    case 'Delete': case 'Backspace':
+      if (state.focusedId) { e.preventDefault(); emptySlot(state.focusedId); }
+      break;
+    default:
+      if (NUM_LAYOUT[e.key]) setLayout(NUM_LAYOUT[e.key]);
+  }
+});
+
+// Drop URLs onto the page → fill empty slots
+document.addEventListener('dragover', e => { e.preventDefault(); });
+document.addEventListener('drop', e => {
+  const text = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+  if (!text || text.startsWith('slot:')) return;  // internal slot drags handled per-frame
+  e.preventDefault();
+  fillFirstEmpty(text);
+});
+
+// ===== Init =====
+renderLayoutTiles();
+load();
+if (state.slots.length === 0) {
+  state.layout = state.layout || '4';
+  for (let i = 0; i < layoutCells(state.layout); i++) state.slots.push(makeSlot());
+}
+renderLayoutTiles();
+renderGrid();
+fetchTitles();
+</script>
+</body>
+</html>
