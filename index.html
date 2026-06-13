@@ -33,17 +33,10 @@
 
   #app {
     display: grid;
-    grid-template-rows: 52px 44px 1fr;
+    grid-template-rows: 44px 1fr;
     height: 100vh;
   }
 
-  /* ===== Topbar ===== */
-  #topbar {
-    display: flex; align-items: center; gap: 12px;
-    padding: 0 14px;
-    background: var(--panel);
-    border-bottom: 1px solid var(--border);
-  }
   .logo {
     display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px;
     user-select: none; padding-right: 4px; white-space: nowrap;
@@ -65,21 +58,14 @@
     width: 10px; height: 11px; background: #fff;
     clip-path: polygon(0 0, 100% 0, 100% 70%, 70% 100%, 50% 100%, 30% 80%, 0 80%);
   }
-  .topbar-hint {
-    flex: 1; min-width: 0; font-size: 12px; color: var(--text-dim);
-    line-height: 1.4; overflow: hidden;
-  }
-  .topbar-hint b { color: var(--text); font-weight: 600; }
   .icon-btn {
     background: transparent; border: 1px solid transparent; color: var(--text-dim);
-    height: 36px; padding: 0 10px; min-width: 36px; border-radius: 6px; cursor: pointer;
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    font-size: 13px;
-    white-space: nowrap;
+    height: 28px; padding: 0 8px; min-width: 28px; border-radius: 5px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    font-size: 13px; white-space: nowrap;
   }
   .icon-btn:hover { background: var(--panel-2); color: var(--text); border-color: var(--border); }
   .icon-btn.active { color: #fff; background: var(--accent-soft); border-color: var(--accent); }
-  .icon-btn .ico { font-size: 15px; }
 
   /* ===== Toolbar ===== */
   #toolbar {
@@ -339,6 +325,71 @@
   #toast.error { border-color: var(--danger); }
   #toast.ok { border-color: var(--ok); }
 
+  /* ===== Nijisanji Panel ===== */
+  .nijisanji-btn {
+    background: transparent; border: 1px solid rgba(255,50,50,0.35); color: #ff6666;
+    border-radius: 6px; padding: 7px 12px; font-size: 12px; cursor: pointer;
+    transition: all 0.12s;
+  }
+  .nijisanji-btn:hover { background: rgba(255,50,50,0.12); border-color: #ff4040; color: #ff9999; }
+
+  #nijisanjiOverlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #nijisanjiOverlay.hidden { display: none; }
+
+  #nijisanjiPanel {
+    background: var(--panel); border: 1px solid var(--border-strong); border-radius: 10px;
+    width: 640px; max-width: 95vw; max-height: 85vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+  }
+  .nijisanji-head {
+    display: flex; align-items: center; gap: 8px; padding: 14px 18px;
+    border-bottom: 1px solid var(--border); flex: 0 0 auto;
+  }
+  .nijisanji-head-title { font-weight: 700; font-size: 18px; flex: 1; display: flex; align-items: center; gap: 8px; }
+  .live-dot { width: 10px; height: 10px; background: #f00; border-radius: 50%; flex-shrink: 0; animation: liveblink 1.2s ease-in-out infinite; }
+  @keyframes liveblink { 0%,100% { opacity:1; } 50% { opacity:0.25; } }
+  .nijisanji-close {
+    background: transparent; border: 0; color: var(--text-dim); cursor: pointer;
+    font-size: 24px; padding: 2px 10px; border-radius: 4px; line-height: 1;
+  }
+  .nijisanji-close:hover { background: var(--panel-2); color: var(--text); }
+  .nijisanji-body { overflow-y: auto; flex: 1; min-height: 0; padding: 10px; }
+  .nijisanji-loading, .nijisanji-empty {
+    text-align: center; color: var(--text-muted); font-size: 15px; padding: 40px 20px;
+  }
+  .nijisanji-error { color: var(--danger); font-size: 14px; padding: 24px; text-align: center; line-height: 1.7; }
+  .nijisanji-section {
+    font-size: 15px; font-weight: 700; color: var(--text);
+    padding: 12px 8px 8px; display: flex; align-items: center; gap: 8px;
+    position: sticky; top: -10px; background: var(--panel); z-index: 1;
+  }
+  .nijisanji-section-count {
+    font-size: 12px; font-weight: 600; color: var(--text-muted);
+    background: var(--panel-2); border: 1px solid var(--border);
+    padding: 1px 8px; border-radius: 999px;
+  }
+  .nijisanji-card {
+    display: flex; gap: 12px; padding: 10px; border-radius: 8px; cursor: pointer;
+    border: 1px solid transparent; transition: all 0.12s; margin-bottom: 4px; align-items: flex-start;
+  }
+  .nijisanji-card:hover { background: var(--panel-2); border-color: var(--border); }
+  .nijisanji-thumb {
+    width: 150px; height: 84px; object-fit: cover; border-radius: 4px; flex-shrink: 0;
+    background: var(--panel-2);
+  }
+  .nijisanji-avatar { width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; background: var(--panel-2); }
+  .nijisanji-info { flex: 1; min-width: 0; }
+  .nijisanji-channel-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .nijisanji-channel-name { font-size: 14px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nijisanji-stream-title {
+    font-size: 16px; color: var(--text); line-height: 1.45; font-weight: 500;
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+
   /* scrollbar */
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -347,41 +398,25 @@
 
   /* mobile */
   @media (max-width: 720px) {
-    #app { grid-template-rows: auto auto 1fr; }
-    #topbar { flex-wrap: wrap; padding: 8px; gap: 6px; height: auto; min-height: 52px; }
-    .topbar-hint { order: 99; flex: 1 1 100%; }
-    .logo { font-size: 13px; }
-    #toolbar { padding: 0 8px; gap: 4px; }
+    #app { grid-template-rows: auto 1fr; }
+    #toolbar { flex-wrap: wrap; padding: 4px 8px; gap: 4px; height: auto; }
     #toolbar .group { padding: 0 4px; }
     #toolbar .group-label { display: none; }
+    .logo { font-size: 13px; }
   }
 </style>
 </head>
 <body>
 <div id="app">
-  <!-- ===== Topbar ===== -->
-  <div id="topbar">
-    <div class="logo">
-      <span class="yt"></span><span class="tw"></span>
-      <span>同時視聴</span>
-    </div>
-    <div class="topbar-hint">
-      <b>レイアウトを選択</b>して各枠を表示 → 各枠に URL を入力して配信を表示。
-      枠を <b>💬 チャット</b> に切り替えると、他の枠の配信のチャットを表示できます。
-    </div>
-    <button class="icon-btn server-btn" id="localServerBtn" title="ローカルサーバーで開く"><span class="ico">🌐</span><span>サーバー</span></button>
-    <button class="icon-btn" id="shareBtn" title="この構成のURLをコピー"><span class="ico">🔗</span></button>
-    <button class="icon-btn" id="fullscreenBtn" title="全画面 (F)"><span class="ico">⛶</span></button>
-    <button class="icon-btn" id="helpBtn" title="ヘルプ"><span class="ico">?</span></button>
-  </div>
-
   <!-- ===== Toolbar ===== -->
   <div id="toolbar">
+    <div class="group">
+      <div class="logo"><span class="yt"></span><span class="tw"></span><span>同時視聴</span></div>
+    </div>
     <div class="group">
       <span class="group-label">一括</span>
       <button class="ctrl-btn primary" id="playAllBtn" title="すべて再生 (Space)"><span class="ico">▶</span> 再生</button>
       <button class="ctrl-btn" id="pauseAllBtn" title="すべて一時停止"><span class="ico">⏸</span> 停止</button>
-      <button class="ctrl-btn" id="restartAllBtn" title="すべて先頭から (R)"><span class="ico">⏮</span> 先頭へ</button>
     </div>
     <div class="group">
       <span class="group-label">音量</span>
@@ -389,13 +424,9 @@
       <button class="ctrl-btn" id="unmuteAllBtn" title="すべてミュート解除"><span class="ico">🔊</span> 解除</button>
       <button class="ctrl-btn" id="soloBtn" title="フォーカスのみ音を出す">🎯 ソロ</button>
       <div class="vol-wrap">
-        <input id="masterVol" type="range" min="0" max="100" value="50" title="マスター音量">
-        <span class="vol-label" id="masterVolLabel">50</span>
+        <input id="masterVol" type="range" min="0" max="100" value="5" title="マスター音量">
+        <span class="vol-label" id="masterVolLabel">5</span>
       </div>
-    </div>
-    <div class="group">
-      <span class="group-label">同期</span>
-      <button class="ctrl-btn" id="syncBtn" title="再生位置を同期">⏱ シーク同期</button>
     </div>
     <div class="group">
       <span class="group-label">レイアウト</span>
@@ -406,6 +437,10 @@
       <button class="ctrl-btn" id="clearBtn" title="すべての枠を空にする"><span class="ico">🗑</span> 全クリア</button>
       <span style="font-size: 12px; color: var(--text-muted); padding: 0 8px;" id="countLabel">0</span>
     </div>
+    <div class="group" style="border-right:0; padding-right:2px">
+      <button class="icon-btn" id="fullscreenBtn" title="全画面 (F)"><span class="ico">⛶</span></button>
+      <button class="icon-btn" id="helpBtn" title="ヘルプ"><span class="ico">?</span></button>
+    </div>
   </div>
 
   <!-- ===== Main ===== -->
@@ -413,6 +448,20 @@
 </div>
 
 <div id="toast"></div>
+
+<div id="nijisanjiOverlay" class="hidden">
+  <div id="nijisanjiPanel">
+    <div class="nijisanji-head">
+      <div class="nijisanji-head-title">
+        <span class="live-dot"></span>ON AIR — にじさんじ
+      </div>
+      <button id="nijisanjiCloseBtn" class="nijisanji-close">×</button>
+    </div>
+    <div class="nijisanji-body" id="nijisanjiBody">
+      <div class="nijisanji-loading">読み込み中…</div>
+    </div>
+  </div>
+</div>
 
 <script>
 // ===== Constants & State =====
@@ -423,7 +472,7 @@ const state = {
   layout: '4',
   focusedId: null,
   soloMode: false,
-  masterVolume: 50,
+  masterVolume: 5,
   ytApiReady: false,
   twitchApiReady: false,
   pendingPlayers: [],
@@ -488,7 +537,7 @@ function enterFallbackMode(msg) {
   if (state.fallbackMode) return;
   state.fallbackMode = true;
   showToast(msg, 'warn');
-  ['playAllBtn','pauseAllBtn','restartAllBtn','muteAllBtn','unmuteAllBtn','soloBtn','syncBtn']
+  ['playAllBtn','pauseAllBtn','muteAllBtn','unmuteAllBtn','soloBtn']
     .forEach(id => { const b = $(id); if (b) b.disabled = true; });
   renderGrid();
 }
@@ -624,6 +673,7 @@ function makeSlot() {
     ready: false, muted: true, volume: state.masterVolume,
     player: null, audioPoll: null,
     chatSourceId: null,       // for mode 'chat': id of the source slot
+    reconnectTimer: null, reconnectAttempts: 0,
   };
 }
 function isFilled(s) { return s.mode === 'video' && !!s.value; }
@@ -652,6 +702,7 @@ function defaultTitleFor(entry) {
 function destroySlotPlayer(s) {
   if (!s) return;
   stopTwitchAudioPolling(s);
+  clearTimeout(s.reconnectTimer); s.reconnectTimer = null; s.reconnectAttempts = 0;
   if (s.player && s.player.destroy) { try { s.player.destroy(); } catch (e) {} }
   s.player = null; s.ready = false;
 }
@@ -712,6 +763,16 @@ function fillFirstEmpty(raw) {
     placed++;
   }
   if (placed) { renderGrid(); save(); fetchTitles(); showToast(`${placed}件を空き枠に追加しました`, 'ok'); }
+}
+function reloadSlot(id) {
+  const s = state.slots.find(x => x.id === id);
+  if (!s || !isFilled(s)) return;
+  const el = document.querySelector(`.frame[data-id="${id}"]`);
+  if (!el) return;
+  destroySlotPlayer(s);
+  const host = el.querySelector('.player-host');
+  if (host) host.innerHTML = `<div id="player-${s.id}"></div>`;
+  scheduleMount(s, el);
 }
 function emptySlot(id) {
   const s = state.slots.find(x => x.id === id);
@@ -812,26 +873,33 @@ function renderGrid() {
 
   main.className = `layout-${state.layout}`;
 
-  const existing = new Map();
-  Array.from(main.children).forEach(c => { if (c.dataset.id) existing.set(c.dataset.id, c); });
-  const frag = document.createDocumentFragment();
+  const existingMap = new Map();
+  Array.from(main.children).forEach(c => { if (c.dataset.id) existingMap.set(c.dataset.id, c); });
 
-  state.slots.forEach((s, i) => {
-    const old = existing.get(s.id);
+  const reusedIds = new Set();
+  const newEls = state.slots.map((s, i) => {
+    const old = existingMap.get(s.id);
     let el;
     if (old && old.dataset.sig === slotSig(s)) {
-      el = old; existing.delete(s.id);
+      el = old;
+      reusedIds.add(s.id);
       updateFrameMeta(el, s, i);
     } else {
       el = createFrameEl(s, i);
     }
     el.classList.toggle('focused', state.focusedId === s.id && isFilled(s));
-    frag.appendChild(el);
+    return el;
   });
 
-  existing.forEach(el => el.remove());
-  main.innerHTML = '';
-  main.appendChild(frag);
+  // Remove stale elements first (changed sig or no longer in slots)
+  existingMap.forEach((el, id) => { if (!reusedIds.has(id)) el.remove(); });
+
+  // Reorder/insert using insertBefore so existing video iframes are never
+  // detached from the document (detach → re-attach causes iframe reload)
+  newEls.forEach((el, i) => {
+    const ref = main.children[i];
+    if (ref !== el) main.insertBefore(el, ref || null);
+  });
 
   refreshChatSelects();
   const filled = state.slots.filter(isFilled).length;
@@ -867,7 +935,7 @@ function buildEmptyFrame(s, i) {
         <button type="submit">表示</button>
       </form>
       <button class="slot-chat-toggle" type="button">💬 この枠にチャットを表示</button>
-      <div class="slot-hint">youtu.be/… ・ youtube.com/watch?v=… ・ twitch.tv/ch</div>
+      <button class="nijisanji-btn" type="button">🔴 にじさんじ配信を追加</button>
     </div>`;
   const form = el.querySelector('.slot-form');
   const input = el.querySelector('.slot-url');
@@ -877,6 +945,7 @@ function buildEmptyFrame(s, i) {
     if (val) fillSlot(s.id, val);
   });
   el.querySelector('.slot-chat-toggle').addEventListener('click', () => setSlotChat(s.id));
+  el.querySelector('.nijisanji-btn').addEventListener('click', () => openNijisanjiPanel(s.id));
   return el;
 }
 
@@ -892,6 +961,7 @@ function buildVideoFrame(s) {
       <span class="badge"></span>
       <span class="title-text"></span>
       <button class="head-btn extlink" title="元のページで開く">↗</button>
+      <button class="head-btn reload" title="再読み込み">↺</button>
       <button class="head-btn remove" title="この枠を空にする">×</button>
     </div>
     <div class="footer">
@@ -907,6 +977,7 @@ function buildVideoFrame(s) {
 
   el.querySelector('.remove').addEventListener('click', e => { e.stopPropagation(); emptySlot(s.id); });
   el.querySelector('.extlink').addEventListener('click', e => { e.stopPropagation(); window.open(externalUrlFor(s), '_blank', 'noopener'); });
+  el.querySelector('.reload').addEventListener('click', e => { e.stopPropagation(); reloadSlot(s.id); });
   el.querySelector('.mute-pill').addEventListener('click', e => { e.stopPropagation(); toggleMute(s.id); });
   el.querySelector('.play-pill').addEventListener('click', e => { e.stopPropagation(); togglePlay(s.id); });
   el.querySelector('.restart-pill').addEventListener('click', e => { e.stopPropagation(); seek(s.id, 0); playOne(s.id); });
@@ -1042,8 +1113,22 @@ function mountYouTubePlayer(s, el) {
           updateMutePill(s.id);
         },
         onStateChange: (e) => {
-          if (e.data === YT.PlayerState.PLAYING) updatePlayPill(s.id, true);
-          else if (e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED) updatePlayPill(s.id, false);
+          if (e.data === YT.PlayerState.PLAYING) {
+            updatePlayPill(s.id, true);
+            s.reconnectAttempts = 0;
+            clearTimeout(s.reconnectTimer); s.reconnectTimer = null;
+          } else if (e.data === YT.PlayerState.PAUSED) {
+            updatePlayPill(s.id, false);
+          } else if (e.data === YT.PlayerState.ENDED) {
+            updatePlayPill(s.id, false);
+            // ライブ配信の一時中断を自動復帰（3s→6s→12s…最大30sで再試行）
+            clearTimeout(s.reconnectTimer);
+            const delay = Math.min(3000 * (1 << s.reconnectAttempts), 30000);
+            s.reconnectTimer = setTimeout(() => {
+              s.reconnectAttempts++;
+              try { if (s.player) s.player.playVideo(); } catch (err) {}
+            }, delay);
+          }
         },
         onError: (e) => { console.warn('YT error', e.data, s.value); showVideoError(s.id, ytErrorMessage(e.data)); },
       },
@@ -1353,12 +1438,16 @@ function showToast(msg, type = '') {
 // ===== Events =====
 $('playAllBtn').addEventListener('click', playAll);
 $('pauseAllBtn').addEventListener('click', pauseAll);
-$('restartAllBtn').addEventListener('click', restartAll);
 $('muteAllBtn').addEventListener('click', muteAll);
 $('unmuteAllBtn').addEventListener('click', unmuteAll);
 $('soloBtn').addEventListener('click', toggleSolo);
-$('syncBtn').addEventListener('click', syncSeek);
 $('masterVol').addEventListener('input', e => setMasterVolume(parseInt(e.target.value, 10)));
+$('masterVol').addEventListener('wheel', e => {
+  e.preventDefault();
+  const delta = e.deltaY < 0 ? 1 : -1;
+  setMasterVolume(Math.max(0, Math.min(100, state.masterVolume + delta)));
+  $('masterVol').value = state.masterVolume;
+}, { passive: false });
 
 $('clearBtn').addEventListener('click', () => {
   const used = state.slots.filter(s => isFilled(s) || s.mode === 'chat').length;
@@ -1370,25 +1459,6 @@ $('clearBtn').addEventListener('click', () => {
   }
 });
 
-$('localServerBtn').addEventListener('click', () => {
-  const serverUrl = new URL('http://127.0.0.1:8765/index.html');
-  serverUrl.hash = location.hash;
-  if (location.hostname === '127.0.0.1' && location.port === '8765') {
-    showToast('すでにローカルサーバーで接続中です', 'ok');
-    return;
-  }
-  window.location.href = serverUrl.toString();
-});
-
-$('shareBtn').addEventListener('click', () => {
-  if (state.slots.every(s => !isFilled(s) && s.mode !== 'chat')) {
-    showToast('共有する内容がありません', 'warn');
-    return;
-  }
-  const hash = btoa(encodeURIComponent(JSON.stringify(snapshot())));
-  const url = `${location.origin}${location.pathname}#${hash}`;
-  navigator.clipboard.writeText(url).then(() => showToast('共有URLをコピーしました', 'ok')).catch(() => prompt('共有URL:', url));
-});
 
 $('fullscreenBtn').addEventListener('click', () => {
   if (document.fullscreenElement) document.exitFullscreen();
@@ -1453,6 +1523,88 @@ document.addEventListener('drop', e => {
   e.preventDefault();
   fillFirstEmpty(text);
 });
+
+// ===== Nijisanji Panel =====
+let nijisanjiTargetId = null;
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function fetchNijisanjiStreams() {
+  if (location.protocol === 'file:') {
+    throw new Error('この機能は file:// では使えません。「python server.py」で起動し http://localhost:8080 を開いてください。');
+  }
+  let res;
+  try {
+    res = await fetch('/api/nijisanji-streams', { cache: 'no-store' });
+  } catch (e) {
+    throw new Error(`サーバーに接続できません（${location.origin}）。「python server.py」が起動しているか確認してください。`);
+  }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (json.error) throw new Error(json.error);
+  // 旧形式(streams)互換、新形式(days)対応
+  if (json.days) return json.days;
+  return [{ label: '🔴 ON AIR', streams: json.streams || [] }];
+}
+
+function buildStreamCard(stream) {
+  const ch = stream['youtube-channel'] || {};
+  const card = document.createElement('div');
+  card.className = 'nijisanji-card';
+  card.innerHTML = `
+    <img class="nijisanji-thumb" src="${escHtml(stream['thumbnail-url'] || '')}" loading="lazy"
+         onerror="this.src='${escHtml(stream['fallback-thumbnail-url'] || '')}'" alt="">
+    <div class="nijisanji-info">
+      <div class="nijisanji-channel-row">
+        <img class="nijisanji-avatar" src="${escHtml(ch['thumbnail-url'] || '')}"
+             onerror="this.style.display='none'" alt="">
+        <span class="nijisanji-channel-name">${escHtml(ch.name || '')}</span>
+      </div>
+      <div class="nijisanji-stream-title">${escHtml(stream.title || '')}</div>
+    </div>`;
+  card.addEventListener('click', () => {
+    if (!stream.url) { showToast('この配信のURLが取得できませんでした', 'error'); return; }
+    fillSlot(nijisanjiTargetId, stream.url);
+    closeNijisanjiPanel();
+  });
+  return card;
+}
+
+function openNijisanjiPanel(slotId) {
+  nijisanjiTargetId = slotId;
+  const body = $('nijisanjiBody');
+  $('nijisanjiOverlay').classList.remove('hidden');
+  body.innerHTML = '<div class="nijisanji-loading">読み込み中…</div>';
+  fetchNijisanjiStreams().then(days => {
+    const total = days.reduce((n, d) => n + (d.streams ? d.streams.length : 0), 0);
+    if (!total) {
+      body.innerHTML = '<div class="nijisanji-empty">配信が見つかりませんでした</div>';
+      return;
+    }
+    body.innerHTML = '';
+    days.forEach(day => {
+      const streams = day.streams || [];
+      if (!streams.length) return;
+      const header = document.createElement('div');
+      header.className = 'nijisanji-section';
+      header.innerHTML = `${escHtml(day.label)} <span class="nijisanji-section-count">${streams.length}</span>`;
+      body.appendChild(header);
+      streams.forEach(stream => body.appendChild(buildStreamCard(stream)));
+    });
+  }).catch(err => {
+    body.innerHTML = `<div class="nijisanji-error">読み込みに失敗しました。<br>${escHtml(String(err))}</div>`;
+  });
+}
+
+function closeNijisanjiPanel() {
+  $('nijisanjiOverlay').classList.add('hidden');
+  nijisanjiTargetId = null;
+}
+
+$('nijisanjiCloseBtn').addEventListener('click', closeNijisanjiPanel);
+$('nijisanjiOverlay').addEventListener('click', e => { if (e.target === $('nijisanjiOverlay')) closeNijisanjiPanel(); });
 
 // ===== Init =====
 renderLayoutTiles();
