@@ -2,11 +2,14 @@
 """
 ローカル開発サーバー
 - 静的ファイルを http://localhost:8080 で配信
-- /api/nijisanji-streams  → nijisanji.jp の ON AIR 配信を JSON で返す
+- /api/nijisanji-streams       → nijisanji.jp の ON AIR 配信を JSON で返す
+- /api/ikioi-streams?keyword=X → ikioi-ranking.com の検索結果(配信)を JSON で返す
 """
 import http.server
 import socketserver
 import urllib.request
+import urllib.parse
+import html as html_mod
 import json
 import re
 import os
@@ -28,8 +31,60 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/nijisanji-streams':
             self.handle_nijisanji()
+        elif self.path.startswith('/api/ikioi-streams'):
+            self.handle_ikioi()
         else:
             super().do_GET()
+
+    def handle_ikioi(self):
+        try:
+            qs = urllib.parse.urlparse(self.path).query
+            params = urllib.parse.parse_qs(qs)
+            keyword = (params.get('keyword') or ['Vtuber'])[0]
+            streams = self._fetch_ikioi(keyword)
+            self._json_ok({'keyword': keyword, 'streams': streams})
+        except Exception as e:
+            self._json_error(500, str(e))
+
+    def _fetch_ikioi(self, keyword):
+        """ikioi-ranking.com の検索結果ページを解析して配信リストを返す"""
+        url = 'https://ikioi-ranking.com/?keyword=' + urllib.parse.quote(keyword)
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=20) as res:
+            page = res.read().decode('utf-8', 'replace')
+
+        out, seen = [], set()
+        # 各配信は <div id="livebox" ...> ブロック。これで分割して個別に解析する
+        for block in page.split('<div id="livebox"')[1:]:
+            m = re.search(r'class="live_maintitle"><a href="([^"]+)"[^>]*title="([^"]*)"', block)
+            if not m:
+                continue
+            stream_url = html_mod.unescape(m.group(1))
+            title = html_mod.unescape(m.group(2)).strip()
+            if not stream_url or stream_url in seen:
+                continue
+            seen.add(stream_url)
+
+            cm = re.search(r'class="live_name">.*?<a [^>]*>([^<]*)</a>', block, re.S)
+            channel = html_mod.unescape(cm.group(1)).strip() if cm else ''
+
+            vm = re.search(r'class="live_viewer[^"]*"[^>]*>.*?<span>([\d,]+)</span>', block, re.S)
+            viewers = int(vm.group(1).replace(',', '')) if vm else None
+
+            tm = re.search(r'class="live_movieImg2"><a [^>]*src="([^"]+)"', block)
+            thumb = html_mod.unescape(tm.group(1)) if tm else ''
+
+            site = 'twitch' if 'twitch.tv' in stream_url else 'youtube'
+
+            out.append({
+                'title': title,
+                'url': stream_url,
+                'channel': channel,
+                'viewers': viewers,
+                'thumbnail-url': thumb,
+                'site': site,
+            })
+        return out
 
     def handle_nijisanji(self):
         try:
@@ -44,7 +99,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     continue
                 seen.add(s.get('url'))
                 on_air.append(s)
-            on_air.sort(key=lambda s: s.get('start-at') or '')
+            # 配信開始が新しい順（降順）
+            on_air.sort(key=lambda s: s.get('start-at') or '', reverse=True)
 
             self._json_ok({
                 'days': [
