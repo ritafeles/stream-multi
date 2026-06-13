@@ -1130,7 +1130,14 @@ function mountYouTubePlayer(s, el) {
             }, delay);
           }
         },
-        onError: (e) => { console.warn('YT error', e.data, s.value); showVideoError(s.id, ytErrorMessage(e.data)); },
+        onError: (e) => {
+          console.warn('YT error', e.data, s.value);
+          if (e.data === 101 || e.data === 150) {
+            showEmbedBlocked(s.id);
+          } else {
+            showVideoError(s.id, ytErrorMessage(e.data));
+          }
+        },
       },
     });
   } catch (err) {
@@ -1160,6 +1167,36 @@ function mountFallbackIframe(s, el) {
   iframe.allowFullscreen = true;
   host.appendChild(iframe);
   s.ready = false; s.player = null;
+}
+
+function showEmbedBlocked(id) {
+  const el = document.querySelector(`.frame[data-id="${id}"]`);
+  if (!el) return;
+  const s = state.slots.find(x => x.id === id);
+  const url = s ? externalUrlFor(s) : '#';
+  const thumb = s ? `https://img.youtube.com/vi/${encodeURIComponent(s.value)}/maxresdefault.jpg` : '';
+  const host = el.querySelector('.player-host');
+  if (host) {
+    host.innerHTML = '';
+    const wrap = document.createElement('div');
+    wrap.style.cssText = `position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+      justify-content:center;text-align:center;gap:12px;padding:20px;
+      background:linear-gradient(rgba(0,0,0,0.55),rgba(0,0,0,0.75)),
+        url('${thumb}') center/cover no-repeat;`;
+    wrap.innerHTML = `
+      <div style="font-size:13px;color:#eee;font-weight:500;text-shadow:0 1px 4px #000;">
+        この動画はサイトへの埋め込みが制限されています
+      </div>
+      <a href="${escHtml(url)}" target="_blank" rel="noopener"
+         style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;
+                background:#ff0033;color:#fff;border-radius:6px;font-weight:700;
+                font-size:14px;text-decoration:none;">
+        ▶ YouTube で視聴する
+      </a>`;
+    host.appendChild(wrap);
+  }
+  const titleEl = el.querySelector('.title-text');
+  if (titleEl) titleEl.textContent = '[埋め込み制限]';
 }
 
 function showVideoError(id, msg) {
