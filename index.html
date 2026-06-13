@@ -33,7 +33,7 @@
 
   #app {
     display: grid;
-    grid-template-rows: 44px 1fr;
+    grid-template-rows: 52px 44px 1fr;
     height: 100vh;
   }
 
@@ -398,7 +398,9 @@
 
   /* mobile */
   @media (max-width: 720px) {
-    #app { grid-template-rows: auto 1fr; }
+    #app { grid-template-rows: auto auto 1fr; }
+    #topbar { flex-wrap: wrap; padding: 8px; gap: 6px; height: auto; min-height: 52px; }
+    .topbar-hint { order: 99; flex: 1 1 100%; }
     #toolbar { flex-wrap: wrap; padding: 4px 8px; gap: 4px; height: auto; }
     #toolbar .group { padding: 0 4px; }
     #toolbar .group-label { display: none; }
