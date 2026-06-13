@@ -359,12 +359,18 @@
     transition: all 0.12s;
   }
   .ikioi-btn:hover { background: rgba(255,150,40,0.14); border-color: #ff9933; color: #ffc488; }
+  .vmiru-btn {
+    background: transparent; border: 1px solid rgba(80,160,255,0.4); color: #6fb3ff;
+    border-radius: 6px; padding: 7px 12px; font-size: 12px; cursor: pointer;
+    transition: all 0.12s;
+  }
+  .vmiru-btn:hover { background: rgba(80,160,255,0.14); border-color: #4d9bff; color: #9cc9ff; }
 
-  #nijisanjiOverlay, #ikioiOverlay {
+  #nijisanjiOverlay, #ikioiOverlay, #vmiruOverlay {
     position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200;
     display: flex; align-items: center; justify-content: center;
   }
-  #nijisanjiOverlay.hidden, #ikioiOverlay.hidden { display: none; }
+  #nijisanjiOverlay.hidden, #ikioiOverlay.hidden, #vmiruOverlay.hidden { display: none; }
 
   /* ===== Settings Modal ===== */
   #settingsOverlay {
@@ -398,12 +404,25 @@
   #settingsStatus { font-size: 12px; color: var(--text-muted); }
   #settingsPanel .btn-row { display: flex; gap: 8px; }
 
-  #nijisanjiPanel, #ikioiPanel {
+  #nijisanjiPanel, #ikioiPanel, #vmiruPanel {
     background: var(--panel); border: 1px solid var(--border-strong); border-radius: 10px;
     width: 640px; max-width: 95vw; max-height: 85vh;
     display: flex; flex-direction: column;
     box-shadow: 0 20px 60px rgba(0,0,0,0.7);
   }
+  /* vmiru agency category chips */
+  .vmiru-cats {
+    display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 18px;
+    border-bottom: 1px solid var(--border); flex: 0 0 auto;
+  }
+  .vmiru-cat {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim);
+    border-radius: 999px; padding: 5px 12px; font-size: 13px; cursor: pointer;
+    transition: all 0.12s; white-space: nowrap;
+  }
+  .vmiru-cat:hover { border-color: var(--border-strong); color: var(--text); }
+  .vmiru-cat.active { background: #4d9bff; border-color: #4d9bff; color: #fff; font-weight: 700; }
+  .vmiru-cat .cat-count { opacity: 0.7; margin-left: 5px; font-size: 11px; }
   /* ikioi keyword search bar */
   .ikioi-search {
     display: flex; gap: 8px; padding: 12px 18px; border-bottom: 1px solid var(--border); flex: 0 0 auto;
@@ -559,6 +578,19 @@
       <button id="ikioiSearchBtn" type="button">検索</button>
     </div>
     <div class="nijisanji-body" id="ikioiBody">
+      <div class="nijisanji-loading">読み込み中…</div>
+    </div>
+  </div>
+</div>
+
+<div id="vmiruOverlay" class="hidden">
+  <div id="vmiruPanel">
+    <div class="nijisanji-head">
+      <div class="nijisanji-head-title">📺 ぶいみる — 配信を追加</div>
+      <button id="vmiruCloseBtn" class="nijisanji-close">×</button>
+    </div>
+    <div class="vmiru-cats" id="vmiruCats"></div>
+    <div class="nijisanji-body" id="vmiruBody">
       <div class="nijisanji-loading">読み込み中…</div>
     </div>
   </div>
@@ -1127,6 +1159,7 @@ function buildEmptyFrame(s, i) {
       <button class="slot-chat-toggle" type="button">💬 この枠にチャットを表示</button>
       <button class="nijisanji-btn" type="button">🔴 にじさんじ配信を追加</button>
       <button class="ikioi-btn" type="button">🔥 勢いランキングから追加</button>
+      <button class="vmiru-btn" type="button">📺 ぶいみるから追加</button>
     </div>`;
   const form = el.querySelector('.slot-form');
   const input = el.querySelector('.slot-url');
@@ -1138,6 +1171,7 @@ function buildEmptyFrame(s, i) {
   el.querySelector('.slot-chat-toggle').addEventListener('click', () => setSlotChat(s.id));
   el.querySelector('.nijisanji-btn').addEventListener('click', () => openNijisanjiPanel(s.id));
   el.querySelector('.ikioi-btn').addEventListener('click', () => openIkioiPanel(s.id));
+  el.querySelector('.vmiru-btn').addEventListener('click', () => openVmiruPanel(s.id));
   return el;
 }
 
@@ -1954,6 +1988,115 @@ $('ikioiCloseBtn').addEventListener('click', closeIkioiPanel);
 $('ikioiOverlay').addEventListener('click', e => { if (e.target === $('ikioiOverlay')) closeIkioiPanel(); });
 $('ikioiSearchBtn').addEventListener('click', submitIkioiSearch);
 $('ikioiKeyword').addEventListener('keydown', e => { if (e.key === 'Enter') submitIkioiSearch(); });
+
+// ===== vmiru (ぶいみる) panel =====
+let vmiruTargetId = null;
+let vmiruStreams = [];
+let vmiruFilter = '';   // '' = すべて、それ以外は agency キー
+
+async function fetchVmiruStreams() {
+  if (location.protocol === 'file:') {
+    throw new Error('この機能は file:// では使えません。「python server.py」で起動し http://localhost:8080 を開いてください。');
+  }
+  let res;
+  try {
+    res = await fetch('/api/vmiru-streams', { cache: 'no-store' });
+  } catch (e) {
+    throw new Error(`サーバーに接続できません（${location.origin}）。「python server.py」が起動しているか確認してください。`);
+  }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (json.error) throw new Error(json.error);
+  return json.streams || [];
+}
+
+function buildVmiruCard(stream) {
+  const card = document.createElement('div');
+  card.className = 'nijisanji-card';
+  const badge = stream.site === 'twitch' ? 'twitch' : 'youtube';
+  const badgeLabel = stream.site === 'twitch' ? 'Twitch' : 'YouTube';
+  const viewers = (typeof stream.viewers === 'number')
+    ? `<div class="ikioi-viewers"><span class="live-dot"></span>${stream.viewers.toLocaleString('ja-JP')} 人視聴中</div>` : '';
+  const agency = stream['agency-label'] ? `<span class="nijisanji-section-count">${escHtml(stream['agency-label'])}</span>` : '';
+  card.innerHTML = `
+    <img class="nijisanji-thumb" src="${escHtml(stream['thumbnail-url'] || '')}" loading="lazy"
+         onerror="this.style.visibility='hidden'" alt="">
+    <div class="nijisanji-info">
+      <div class="nijisanji-channel-row">
+        <img class="nijisanji-avatar" src="${escHtml(stream['channel-thumbnail'] || '')}"
+             onerror="this.style.display='none'" alt="">
+        <span class="nijisanji-channel-name">${escHtml(stream.channel || '')}</span>
+        <span class="ikioi-site-badge ${badge}">${badgeLabel}</span>
+        ${agency}
+      </div>
+      <div class="nijisanji-stream-title">${escHtml(stream.title || '')}</div>
+      ${viewers}
+    </div>`;
+  card.addEventListener('click', () => {
+    if (!stream.url) { showToast('この配信のURLが取得できませんでした', 'error'); return; }
+    fillSlot(vmiruTargetId, stream.url);
+    closeVmiruPanel();
+  });
+  return card;
+}
+
+function renderVmiruCats() {
+  const cats = $('vmiruCats');
+  cats.innerHTML = '';
+  // agency キー → ラベル、件数を集計（出現順を維持）
+  const order = [];
+  const labelOf = {}, countOf = {};
+  vmiruStreams.forEach(s => {
+    const key = s.agency || '__none';
+    if (!(key in countOf)) { order.push(key); countOf[key] = 0; labelOf[key] = s['agency-label'] || 'その他'; }
+    countOf[key]++;
+  });
+  const mkChip = (key, label, count) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'vmiru-cat' + (vmiruFilter === key ? ' active' : '');
+    b.innerHTML = `${escHtml(label)}<span class="cat-count">${count}</span>`;
+    b.addEventListener('click', () => { vmiruFilter = key; renderVmiruCats(); renderVmiruList(); });
+    cats.appendChild(b);
+  };
+  mkChip('', 'すべて', vmiruStreams.length);
+  order.forEach(key => mkChip(key, labelOf[key], countOf[key]));
+}
+
+function renderVmiruList() {
+  const body = $('vmiruBody');
+  const list = vmiruFilter
+    ? vmiruStreams.filter(s => (s.agency || '__none') === vmiruFilter)
+    : vmiruStreams;
+  if (!list.length) {
+    body.innerHTML = '<div class="nijisanji-empty">配信が見つかりませんでした</div>';
+    return;
+  }
+  body.innerHTML = '';
+  list.forEach(s => body.appendChild(buildVmiruCard(s)));
+  body.scrollTop = 0;
+}
+
+function openVmiruPanel(slotId) {
+  vmiruTargetId = slotId;
+  vmiruFilter = '';
+  $('vmiruCats').innerHTML = '';
+  $('vmiruBody').innerHTML = '<div class="nijisanji-loading">読み込み中…</div>';
+  $('vmiruOverlay').classList.remove('hidden');
+  fetchVmiruStreams().then(streams => {
+    vmiruStreams = streams;
+    renderVmiruCats();
+    renderVmiruList();
+  }).catch(err => {
+    $('vmiruBody').innerHTML = `<div class="nijisanji-error">読み込みに失敗しました。<br>${escHtml(String(err))}</div>`;
+  });
+}
+function closeVmiruPanel() {
+  $('vmiruOverlay').classList.add('hidden');
+  vmiruTargetId = null;
+}
+$('vmiruCloseBtn').addEventListener('click', closeVmiruPanel);
+$('vmiruOverlay').addEventListener('click', e => { if (e.target === $('vmiruOverlay')) closeVmiruPanel(); });
 
 // ===== Init =====
 renderLayoutTiles();

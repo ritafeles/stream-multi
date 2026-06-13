@@ -33,8 +33,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_nijisanji()
         elif self.path.startswith('/api/ikioi-streams'):
             self.handle_ikioi()
+        elif self.path.startswith('/api/vmiru-streams'):
+            self.handle_vmiru()
         else:
             super().do_GET()
+
+    def handle_vmiru(self):
+        try:
+            self._json_ok({'streams': fetch_vmiru()})
+        except Exception as e:
+            self._json_error(500, str(e))
 
     def handle_ikioi(self):
         try:
@@ -169,6 +177,97 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         print(fmt % args)
+
+
+# ===== vmiru (ぶいみる) =====
+# データは Next.js + Firebase の SPA が CloudFront 上の JSON を取得して描画している。
+# 配信中の判定: YouTube は actualStartTimeMs あり & actualEndTimeMs なし、Twitch は streams.json に載っているもの。
+VMIRU_CDN = 'https://d3t40075vqz7f2.cloudfront.net'
+
+# 事務所キー → 表示名
+VMIRU_AGENCY_LABELS = {
+    'nijisanji': 'にじさんじ', 'hololive': 'ホロライブ', 'vspo': 'ぶいすぽっ！',
+    '774inc': '774inc', 'noripro': 'のりプロ', 'hololive_en': 'hololive EN',
+    'hololive_id': 'hololive ID', 'nijisanji_en': 'NIJISANJI EN', 'holostars': 'ホロスターズ',
+    'neoporte': 'ネオポルテ', 'dotlive': '.LIVE', 'independent': '個人勢',
+    'nijisanji_kr': 'NIJISANJI KR', 'aogirihs': 'あおぎり高校',
+}
+
+
+def _vmiru_json(path):
+    req = urllib.request.Request(VMIRU_CDN + path, headers=HEADERS)
+    with urllib.request.urlopen(req, timeout=25) as res:
+        return json.loads(res.read().decode('utf-8', 'replace'))
+
+
+def _vmiru_list(obj):
+    """{key: [...]} 形式・リスト形式の両対応で配列を取り出す"""
+    if isinstance(obj, list):
+        return obj
+    for v in obj.values():
+        if isinstance(v, list):
+            return v
+    return list(obj.values())
+
+
+def fetch_vmiru():
+    videos = _vmiru_list(_vmiru_json('/main/videos.json'))
+    channels = _vmiru_list(_vmiru_json('/main/channels.json'))
+    tags = _vmiru_json('/main/tags.json')
+    tw_streams = _vmiru_list(_vmiru_json('/main/twitch/streams.json'))
+    tw_users = _vmiru_list(_vmiru_json('/main/twitch/users.json'))
+
+    ch_by_id = {c.get('id'): c for c in channels}
+    tw_user_by_id = {u.get('id'): u for u in tw_users}
+    # channelTags: [{channelId, tag}] → {channelId: tag}
+    raw_tags = tags.get('channelTags', []) if isinstance(tags, dict) else []
+    channel_tags = {t.get('channelId'): t.get('tag') for t in raw_tags if isinstance(t, dict)}
+
+    def agency_of(cid):
+        return channel_tags.get(cid)
+
+    out = []
+    # YouTube: 配信中のみ
+    for v in videos:
+        if not (v.get('actualStartTimeMs') and not v.get('actualEndTimeMs')):
+            continue
+        cid = v.get('channelId')
+        ch = ch_by_id.get(cid, {})
+        ag = agency_of(cid)
+        out.append({
+            'title': v.get('title'),
+            'url': 'https://www.youtube.com/watch?v=' + v.get('id', ''),
+            'channel': ch.get('title') or '',
+            'channel-thumbnail': ch.get('thumbnailImgUrl'),
+            'viewers': v.get('concurrentViewers'),
+            'thumbnail-url': v.get('thumbnailImgUrl'),
+            'site': 'youtube',
+            'agency': ag,
+            'agency-label': VMIRU_AGENCY_LABELS.get(ag, ag),
+        })
+
+    # Twitch: streams.json は配信中のみ
+    for s in tw_streams:
+        u = tw_user_by_id.get(s.get('userId'), {})
+        login = u.get('login')
+        if not login:
+            continue
+        ag = agency_of(s.get('userId')) or agency_of(u.get('id'))
+        thumb = (s.get('thumbnailUrl') or '').replace('{width}', '320').replace('{height}', '180')
+        out.append({
+            'title': s.get('title'),
+            'url': 'https://www.twitch.tv/' + login,
+            'channel': u.get('displayName') or login,
+            'channel-thumbnail': u.get('profileImageUrl'),
+            'viewers': s.get('viewerCount'),
+            'thumbnail-url': thumb,
+            'site': 'twitch',
+            'agency': ag,
+            'agency-label': VMIRU_AGENCY_LABELS.get(ag, ag),
+        })
+
+    out.sort(key=lambda x: x.get('viewers') or 0, reverse=True)
+    return out
 
 
 class ThreadingHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
