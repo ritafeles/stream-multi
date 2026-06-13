@@ -1237,6 +1237,17 @@ function buildVideoFrame(s) {
     }
   });
 
+  el.addEventListener('wheel', e => {
+    if (e.target.closest('.player-host')) return;
+    e.preventDefault();
+    const slot = state.slots.find(x => x.id === s.id);
+    if (!slot) return;
+    const newVol = Math.max(0, Math.min(100, slot.volume + (e.deltaY < 0 ? 1 : -1)));
+    setVolume(s.id, newVol);
+    const slider = el.querySelector('.vol-mini');
+    if (slider) slider.value = newVol;
+  }, { passive: false });
+
   scheduleMount(s, el);
   return el;
 }
