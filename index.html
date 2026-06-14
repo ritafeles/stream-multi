@@ -544,6 +544,9 @@
     </div>
     <div class="spacer" style="flex:1"></div>
     <div class="group">
+      <span id="clockDisplay" style="font-size:13px;font-variant-numeric:tabular-nums;letter-spacing:0.5px;color:var(--text-dim);font-family:monospace;padding:0 4px;"></span>
+    </div>
+    <div class="group">
       <button class="ctrl-btn" id="clearBtn" title="すべての枠を空にする"><span class="ico">🗑</span> 全クリア</button>
       <span style="font-size: 12px; color: var(--text-muted); padding: 0 8px;" id="countLabel">0</span>
     </div>
@@ -1750,6 +1753,19 @@ $('fullscreenBtn').addEventListener('click', () => {
   if (document.fullscreenElement) document.exitFullscreen();
   else document.documentElement.requestFullscreen();
 });
+
+(function startClock() {
+  const el = $('clockDisplay');
+  function tick() {
+    const now = new Date();
+    const h = String(now.getHours()).padStart(2, '0');
+    const m = String(now.getMinutes()).padStart(2, '0');
+    const s = String(now.getSeconds()).padStart(2, '0');
+    el.textContent = `${h}:${m}:${s}`;
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
 
 // ===== Settings (API key) =====
 function openSettings() {
