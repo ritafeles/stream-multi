@@ -312,8 +312,15 @@
   }
   .chat-head .head-btn:hover { color: #fff; border-color: var(--border-strong); }
   .chat-head .head-btn.remove:hover { color: #fff; background: var(--danger); border-color: var(--danger); }
-  .chat-body { position: relative; flex: 1; min-height: 0; }
-  .chat-body iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .chat-body { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+  .chat-clip-wrap {
+    position: absolute;
+    top: -44px;
+    bottom: -62px;
+    left: 0;
+    right: 0;
+  }
+  .chat-clip-wrap iframe { width: 100%; height: 100%; border: 0; display: block; }
   .chat-empty {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     text-align: center; color: var(--text-muted); font-size: 12px; padding: 24px; line-height: 1.6;
@@ -1272,10 +1279,13 @@ function buildChatFrame(s) {
   const body = el.querySelector('.chat-body');
   const src = s.chatSourceId ? state.slots.find(x => x.id === s.chatSourceId) : null;
   if (src && chattable(src)) {
+    const wrap = document.createElement('div');
+    wrap.className = 'chat-clip-wrap';
     const iframe = document.createElement('iframe');
     iframe.src = chatSrcFor(src);
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
-    body.appendChild(iframe);
+    wrap.appendChild(iframe);
+    body.appendChild(wrap);
   } else {
     const m = document.createElement('div');
     m.className = 'chat-empty';
