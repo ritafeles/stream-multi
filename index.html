@@ -544,7 +544,7 @@
     </div>
     <div class="spacer" style="flex:1"></div>
     <div class="group">
-      <span id="clockDisplay" style="font-size:13px;font-variant-numeric:tabular-nums;letter-spacing:0.5px;color:var(--text-dim);font-family:monospace;padding:0 4px;"></span>
+      <span id="clockDisplay" style="font-size:13px;font-variant-numeric:tabular-nums;letter-spacing:0.5px;color:var(--text);font-family:monospace;padding:0 4px;font-weight:600;"></span>
     </div>
     <div class="group">
       <button class="ctrl-btn" id="clearBtn" title="すべての枠を空にする"><span class="ico">🗑</span> 全クリア</button>
@@ -1224,7 +1224,7 @@ function buildVideoFrame(s) {
   const chatPopoutBtn = el.querySelector('.chat-popout');
   const popoutUrl = chatPopoutUrl(s);
   if (popoutUrl) {
-    chatPopoutBtn.addEventListener('click', e => { e.stopPropagation(); window.open(popoutUrl, 'chat_popout_' + s.id, 'width=400,height=600,noopener'); });
+    chatPopoutBtn.addEventListener('click', e => { e.stopPropagation(); window.open(popoutUrl, '_blank', 'width=400,height=700,popup'); });
   } else {
     chatPopoutBtn.style.display = 'none';
   }
