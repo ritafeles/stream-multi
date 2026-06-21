@@ -1203,7 +1203,7 @@ function buildVideoFrame(s) {
       <span class="badge"></span>
       <span class="title-text"></span>
       <button class="head-btn extlink" title="元のページで開く">↗</button>
-      <a class="head-btn chat-popout" title="チャットをポップアウト" target="_blank" rel="noopener noreferrer">💬</a>
+      <a class="head-btn chat-popout" title="チャットをポップアウト" href="#" rel="noopener noreferrer">💬</a>
       <button class="head-btn reload" title="再読み込み">↺</button>
       <button class="head-btn remove" title="この枠を空にする">×</button>
     </div>
@@ -1224,15 +1224,20 @@ function buildVideoFrame(s) {
   const chatPopoutLink = el.querySelector('.chat-popout');
   const popoutUrl = chatPopoutUrl(s);
   if (popoutUrl) {
-    chatPopoutLink.href = popoutUrl;
     chatPopoutLink.addEventListener('click', e => {
       e.preventDefault();
       e.stopPropagation();
       const w = 400, h = 700;
-      const left = window.screenX + window.outerWidth - w;
-      const top = window.screenY;
-      window.open(popoutUrl, 'chatpop_' + s.id,
+      const left = Math.max(0, (window.screen.availWidth || 1280) - w);
+      const top = 0;
+      const win = window.open(popoutUrl, 'chatpop_' + s.id,
         `popup=yes,width=${w},height=${h},left=${left},top=${top}`);
+      if (!win) {
+        showToast('ポップアップがブロックされました。新しいタブで開きます', 'warn');
+        window.open(popoutUrl, '_blank', 'noopener');
+      } else {
+        try { win.focus(); } catch (err) {}
+      }
     });
   } else {
     chatPopoutLink.style.display = 'none';
