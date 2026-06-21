@@ -243,6 +243,7 @@
   }
   .frame .footer .pill:hover { background: rgba(255,255,255,0.18); }
   .frame .footer .pill.muted-pill { background: var(--accent); }
+  .frame .footer .pill.active { background: var(--accent); }
   .frame .footer .vol-mini {
     width: 70px; height: 3px; appearance: none; -webkit-appearance: none;
     background: rgba(255,255,255,0.3); border-radius: 2px;
@@ -848,6 +849,7 @@ function makeSlot() {
     player: null, audioPoll: null,
     chatSourceId: null,       // for mode 'chat': id of the source slot
     reconnectTimer: null, reconnectAttempts: 0,
+    ffTimer: null,            // 早送り(2倍速で追いつき)用ポーリング
   };
 }
 function isFilled(s) { return s.mode === 'video' && !!s.value; }
@@ -876,6 +878,7 @@ function defaultTitleFor(entry) {
 function destroySlotPlayer(s) {
   if (!s) return;
   stopTwitchAudioPolling(s);
+  clearInterval(s.ffTimer); s.ffTimer = null;
   clearTimeout(s.reconnectTimer); s.reconnectTimer = null; s.reconnectAttempts = 0;
   if (s.player && s.player.destroy) { try { s.player.destroy(); } catch (e) {} }
   s.player = null; s.ready = false;
@@ -1206,11 +1209,13 @@ function buildVideoFrame(s) {
       <input type="range" class="vol-mini" min="0" max="100" value="${s.volume}" title="音量">
       <span style="flex:1"></span>
       <button class="pill restart-pill" title="先頭から">⏮</button>
+      <button class="pill ff-pill" title="2倍速でライブ最新に追いつく">⏩</button>
       <button class="pill play-pill" title="再生/停止">▶</button>
     </div>`;
   el.querySelector('.badge').textContent = badgeText(s);
   el.querySelector('.title-text').textContent = s.title || s.value;
   if (s.type === 'twitch' && s.kind === 'channel') el.querySelector('.restart-pill').style.display = 'none';
+  if (s.type !== 'youtube') el.querySelector('.ff-pill').style.display = 'none';
   applyLivePill(el, s);
 
   el.querySelector('.remove').addEventListener('click', e => { e.stopPropagation(); emptySlot(s.id); });
@@ -1219,6 +1224,7 @@ function buildVideoFrame(s) {
   el.querySelector('.mute-pill').addEventListener('click', e => { e.stopPropagation(); toggleMute(s.id); });
   el.querySelector('.play-pill').addEventListener('click', e => { e.stopPropagation(); togglePlay(s.id); });
   el.querySelector('.restart-pill').addEventListener('click', e => { e.stopPropagation(); seek(s.id, 0); playOne(s.id); });
+  el.querySelector('.ff-pill').addEventListener('click', e => { e.stopPropagation(); toggleFastForward(s.id); });
   el.querySelector('.vol-mini').addEventListener('input', e => { e.stopPropagation(); setVolume(s.id, parseInt(e.target.value, 10)); });
   el.addEventListener('click', () => focusSlot(s.id));
 
@@ -1518,6 +1524,8 @@ const Adapter = {
   unmute(s){ if (!s.player) return; try { if (s.type === 'youtube') s.player.unMute(); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
   setVolume(s, val) { if (!s.player) return; try { if (s.type === 'youtube') s.player.setVolume(val); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
   seek(s, sec) { if (!s.player) return; try { if (s.type === 'youtube') s.player.seekTo(sec, true); else if (s.type === 'twitch') s.player.seek(sec); } catch (e) {} },
+  setRate(s, rate) { if (!s.player) return; try { if (s.type === 'youtube' && s.player.setPlaybackRate) s.player.setPlaybackRate(rate); } catch (e) {} },
+  getDuration(s) { if (!s.player) return null; try { if (s.player.getDuration) return s.player.getDuration(); } catch (e) {} return null; },
   getCurrentTime(s) {
     if (!s.player) return null;
     try {
@@ -1576,6 +1584,36 @@ function setVolume(id, val) {
 function seek(id, sec)    { const s = state.slots.find(x => x.id === id); if (s) Adapter.seek(s, sec); }
 function playOne(id)      { const s = state.slots.find(x => x.id === id); if (s) Adapter.play(s); }
 function togglePlay(id)   { const s = state.slots.find(x => x.id === id); if (!s) return; Adapter.isPlaying(s) ? Adapter.pause(s) : Adapter.play(s); }
+
+// ===== Fast-forward (2x catch-up to live edge) =====
+const FF_LIVE_THRESHOLD = 4;  // 残りこの秒数以内になったらライブ最新とみなす
+function updateFfPill(id, active) {
+  const el = document.querySelector(`.frame[data-id="${id}"] .ff-pill`);
+  if (el) el.classList.toggle('active', active);
+}
+function stopFastForward(s) {
+  if (!s) return;
+  clearInterval(s.ffTimer); s.ffTimer = null;
+  Adapter.setRate(s, 1);
+  updateFfPill(s.id, false);
+}
+function toggleFastForward(id) {
+  const s = state.slots.find(x => x.id === id);
+  if (!s || !s.player) return;
+  if (s.ffTimer) { stopFastForward(s); return; }   // トグルで解除
+  Adapter.setRate(s, 2);
+  Adapter.play(s);
+  updateFfPill(id, true);
+  s.ffTimer = setInterval(() => {
+    const cur = Adapter.getCurrentTime(s);
+    const dur = Adapter.getDuration(s);
+    if (cur == null || dur == null || dur <= 0) return;
+    if (dur - cur <= FF_LIVE_THRESHOLD) {
+      stopFastForward(s);
+      showToast('ライブ最新に追いつきました', 'ok');
+    }
+  }, 1000);
+}
 
 // ===== Bulk controls (operate on filled video slots) =====
 function filledVideos() { return state.slots.filter(isFilled); }
