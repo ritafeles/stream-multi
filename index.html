@@ -326,32 +326,6 @@
     text-align: center; color: var(--text-muted); font-size: 12px; padding: 24px; line-height: 1.6;
   }
 
-  /* ===== Floating chat panel (popup-blocker fallback) ===== */
-  .chat-float {
-    position: fixed; width: 380px; height: 560px; z-index: 500;
-    background: #0e0e12; border: 1px solid var(--border-strong); border-radius: 8px;
-    display: flex; flex-direction: column; overflow: hidden;
-    box-shadow: 0 12px 40px rgba(0,0,0,0.6); resize: both;
-    min-width: 240px; min-height: 200px;
-  }
-  .chat-float-head {
-    display: flex; align-items: center; gap: 6px; padding: 6px 8px;
-    background: var(--panel); border-bottom: 1px solid var(--border);
-    cursor: grab; user-select: none; flex: 0 0 auto;
-  }
-  .chat-float-head.dragging { cursor: grabbing; }
-  .chat-float-title { flex: 1; min-width: 0; font-size: 12px; color: var(--text-dim);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .chat-float-head .head-btn {
-    background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim);
-    width: 24px; height: 24px; border-radius: 5px; cursor: pointer; font-size: 13px;
-    display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
-  }
-  .chat-float-head .head-btn:hover { color: #fff; border-color: var(--border-strong); }
-  .chat-float-head .head-btn.close:hover { background: var(--danger); border-color: var(--danger); }
-  .chat-float-body { flex: 1; min-height: 0; position: relative; }
-  .chat-float-body iframe { width: 100%; height: 100%; border: 0; display: block; }
-
   /* layouts */
   .layout-1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
   .layout-2h { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
@@ -1094,11 +1068,6 @@ function startViewerPolling() {
 }
 
 // ===== Helpers =====
-function chatPopoutUrl(s) {
-  if (s.type === 'youtube' && s.kind === 'video') return `https://www.youtube.com/live_chat?v=${encodeURIComponent(s.value)}&dark_theme=1`;
-  if (s.type === 'twitch' && s.kind === 'channel') return `https://www.twitch.tv/popout/${encodeURIComponent(s.value)}/chat?darkpopout`;
-  return null;
-}
 function externalUrlFor(s) {
   if (s.type === 'youtube') return `https://www.youtube.com/watch?v=${s.value}`;
   if (s.type === 'twitch') {
@@ -1229,7 +1198,6 @@ function buildVideoFrame(s) {
       <span class="badge"></span>
       <span class="title-text"></span>
       <button class="head-btn extlink" title="元のページで開く">↗</button>
-      <a class="head-btn chat-popout" title="チャットをポップアウト" href="#" rel="noopener noreferrer">💬</a>
       <button class="head-btn reload" title="再読み込み">↺</button>
       <button class="head-btn remove" title="この枠を空にする">×</button>
     </div>
@@ -1247,20 +1215,6 @@ function buildVideoFrame(s) {
 
   el.querySelector('.remove').addEventListener('click', e => { e.stopPropagation(); emptySlot(s.id); });
   el.querySelector('.extlink').addEventListener('click', e => { e.stopPropagation(); window.open(externalUrlFor(s), '_blank', 'noopener'); });
-  const chatPopoutLink = el.querySelector('.chat-popout');
-  const popoutUrl = chatPopoutUrl(s);
-  if (popoutUrl) {
-    chatPopoutLink.addEventListener('click', e => {
-      e.preventDefault();
-      e.stopPropagation();
-      const win = window.open(popoutUrl, 'chatpop_' + s.id, 'width=400,height=700');
-      if (win) { try { win.focus(); } catch (err) {} return; }
-      // ポップアップがブロックされた場合はアプリ内フローティングパネルで開く
-      openChatFloat(s);
-    });
-  } else {
-    chatPopoutLink.style.display = 'none';
-  }
   el.querySelector('.reload').addEventListener('click', e => { e.stopPropagation(); reloadSlot(s.id); });
   el.querySelector('.mute-pill').addEventListener('click', e => { e.stopPropagation(); toggleMute(s.id); });
   el.querySelector('.play-pill').addEventListener('click', e => { e.stopPropagation(); togglePlay(s.id); });
@@ -1367,60 +1321,6 @@ function refreshChatSelects() {
     const sel = main.querySelector(`.frame[data-id="${s.id}"] .chat-source`);
     if (sel) populateChatSelect(sel, s);
   });
-}
-
-// ===== Floating chat panel (popup-blocker fallback) =====
-function openChatFloat(s) {
-  const existing = document.querySelector(`.chat-float[data-id="${s.id}"]`);
-  if (existing) { existing.remove(); return; }
-  const src = chatSrcFor(s);
-  if (!src) { showToast('この配信のチャットは表示できません', 'warn'); return; }
-
-  const panel = document.createElement('div');
-  panel.className = 'chat-float';
-  panel.dataset.id = s.id;
-  const offset = document.querySelectorAll('.chat-float').length * 24;
-  panel.style.right = (20 + offset) + 'px';
-  panel.style.top = (60 + offset) + 'px';
-  panel.innerHTML = `
-    <div class="chat-float-head">
-      <span class="chat-float-title"></span>
-      <button class="head-btn close" title="閉じる">×</button>
-    </div>
-    <div class="chat-float-body"></div>`;
-  panel.querySelector('.chat-float-title').textContent = '💬 ' + (s.title || s.value);
-
-  const iframe = document.createElement('iframe');
-  iframe.src = src;
-  iframe.referrerPolicy = 'strict-origin-when-cross-origin';
-  panel.querySelector('.chat-float-body').appendChild(iframe);
-
-  panel.querySelector('.close').addEventListener('click', () => panel.remove());
-
-  // drag by header
-  const head = panel.querySelector('.chat-float-head');
-  let dragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
-  head.addEventListener('pointerdown', e => {
-    if (e.target.closest('.head-btn')) return;
-    dragging = true;
-    head.classList.add('dragging');
-    const r = panel.getBoundingClientRect();
-    panel.style.left = r.left + 'px'; panel.style.top = r.top + 'px';
-    panel.style.right = 'auto';
-    startX = e.clientX; startY = e.clientY; startLeft = r.left; startTop = r.top;
-    head.setPointerCapture(e.pointerId);
-  });
-  head.addEventListener('pointermove', e => {
-    if (!dragging) return;
-    panel.style.left = Math.max(0, startLeft + e.clientX - startX) + 'px';
-    panel.style.top = Math.max(0, startTop + e.clientY - startY) + 'px';
-  });
-  head.addEventListener('pointerup', e => {
-    dragging = false; head.classList.remove('dragging');
-    try { head.releasePointerCapture(e.pointerId); } catch (err) {}
-  });
-
-  document.body.appendChild(panel);
 }
 
 // ===== Player mounting =====
