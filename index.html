@@ -1225,7 +1225,15 @@ function buildVideoFrame(s) {
   const popoutUrl = chatPopoutUrl(s);
   if (popoutUrl) {
     chatPopoutLink.href = popoutUrl;
-    chatPopoutLink.addEventListener('click', e => e.stopPropagation());
+    chatPopoutLink.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const w = 400, h = 700;
+      const left = window.screenX + window.outerWidth - w;
+      const top = window.screenY;
+      window.open(popoutUrl, 'chatpop_' + s.id,
+        `popup=yes,width=${w},height=${h},left=${left},top=${top}`);
+    });
   } else {
     chatPopoutLink.style.display = 'none';
   }
