@@ -1068,6 +1068,11 @@ function startViewerPolling() {
 }
 
 // ===== Helpers =====
+function chatPopoutUrl(s) {
+  if (s.type === 'youtube' && s.kind === 'video') return `https://www.youtube.com/live_chat?v=${encodeURIComponent(s.value)}&dark_theme=1`;
+  if (s.type === 'twitch' && s.kind === 'channel') return `https://www.twitch.tv/popout/${encodeURIComponent(s.value)}/chat?darkpopout`;
+  return null;
+}
 function externalUrlFor(s) {
   if (s.type === 'youtube') return `https://www.youtube.com/watch?v=${s.value}`;
   if (s.type === 'twitch') {
@@ -1198,6 +1203,7 @@ function buildVideoFrame(s) {
       <span class="badge"></span>
       <span class="title-text"></span>
       <button class="head-btn extlink" title="元のページで開く">↗</button>
+      <button class="head-btn chat-popout" title="チャットをポップアウト">💬</button>
       <button class="head-btn reload" title="再読み込み">↺</button>
       <button class="head-btn remove" title="この枠を空にする">×</button>
     </div>
@@ -1215,6 +1221,13 @@ function buildVideoFrame(s) {
 
   el.querySelector('.remove').addEventListener('click', e => { e.stopPropagation(); emptySlot(s.id); });
   el.querySelector('.extlink').addEventListener('click', e => { e.stopPropagation(); window.open(externalUrlFor(s), '_blank', 'noopener'); });
+  const chatPopoutBtn = el.querySelector('.chat-popout');
+  const popoutUrl = chatPopoutUrl(s);
+  if (popoutUrl) {
+    chatPopoutBtn.addEventListener('click', e => { e.stopPropagation(); window.open(popoutUrl, 'chat_popout_' + s.id, 'width=400,height=600,noopener'); });
+  } else {
+    chatPopoutBtn.style.display = 'none';
+  }
   el.querySelector('.reload').addEventListener('click', e => { e.stopPropagation(); reloadSlot(s.id); });
   el.querySelector('.mute-pill').addEventListener('click', e => { e.stopPropagation(); toggleMute(s.id); });
   el.querySelector('.play-pill').addEventListener('click', e => { e.stopPropagation(); togglePlay(s.id); });
