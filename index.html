@@ -184,6 +184,12 @@
     transition: all 0.12s;
   }
   .slot-chat-toggle:hover { color: #fff; border-color: var(--twitch); background: var(--twitch-soft); }
+  .slot-popout-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+    border-radius: 6px; padding: 7px 12px; font-size: 12px; cursor: pointer;
+    transition: all 0.12s;
+  }
+  .slot-popout-btn:hover { color: #fff; border-color: var(--border-strong); background: var(--panel-2); }
   .slot-hint { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
 
   /* --- video frame --- */
@@ -670,6 +676,8 @@ try { ytApiKey = localStorage.getItem(YT_API_KEY_STORAGE) || ''; } catch (e) {}
 const VIEWER_POLL_MS = 60000;   // 視聴者数の更新間隔（ミリ秒）
 const MAX_SLOTS = 16;
 const STORAGE_KEY = 'ymv_state_v3';
+// ポップアウト子ウィンドウ（?popout=1）ではメインの保存状態を上書きしない
+const IS_POPOUT = new URLSearchParams(location.search).has('popout');
 const state = {
   slots: [],           // fixed-length per layout; each slot is a frame
   layout: '4',
@@ -1214,6 +1222,7 @@ function buildEmptyFrame(s, i) {
       <button class="nijisanji-btn" type="button">🔴 にじさんじ配信を追加</button>
       <button class="ikioi-btn" type="button">🔥 勢いランキングから追加</button>
       <button class="vmiru-btn" type="button">📺 ぶいみるから追加</button>
+      <button class="slot-popout-btn" type="button">⧉ この枠を別ウィンドウで開く</button>
     </div>`;
   const form = el.querySelector('.slot-form');
   const input = el.querySelector('.slot-url');
@@ -1226,6 +1235,7 @@ function buildEmptyFrame(s, i) {
   el.querySelector('.nijisanji-btn').addEventListener('click', () => openNijisanjiPanel(s.id));
   el.querySelector('.ikioi-btn').addEventListener('click', () => openIkioiPanel(s.id));
   el.querySelector('.vmiru-btn').addEventListener('click', () => openVmiruPanel(s.id));
+  el.querySelector('.slot-popout-btn').addEventListener('click', () => popoutFrame(s.id));
   return el;
 }
 
@@ -1374,27 +1384,29 @@ function refreshChatSelects() {
 }
 
 // ===== Frame pop-out =====
-// 別ウィンドウで開く。ブロックされた場合はアプリ内フローティングパネルにフォールバック。
+// 枠そのものをアプリの1枠レイアウトとして別ウィンドウで開く（空枠でも可）。
+// ブロックされた場合、配信中の枠はアプリ内フローティングパネルにフォールバック。
 function popoutFrame(id) {
   const s = state.slots.find(x => x.id === id);
-  if (!s || !isFilled(s)) return;
-  const src = embedSrcFor(s, { muted: false });
-  if (!src) { showToast('この配信はポップアウトできません', 'warn'); return; }
-  const win = window.open('', 'pop_' + s.id, 'width=960,height=560');
-  if (!win) { openFrameFloat(s); return; }   // ポップアップブロック時
-  const title = escHtml(s.title || s.value);
-  const safeSrc = escHtml(src);
-  win.document.open();
-  win.document.write(
-    '<!doctype html><html><head><meta charset="utf-8">' +
-    '<title>' + title + '</title>' +
-    '<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}' +
-    'iframe{border:0;width:100%;height:100%;display:block}</style></head>' +
-    '<body><iframe src="' + safeSrc + '" ' +
-    'allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" ' +
-    'allowfullscreen></iframe></body></html>'
-  );
-  win.document.close();
+  if (!s || s.mode !== 'video') return;
+  const data = {
+    slots: [{
+      mode: 'video',
+      type: s.type, kind: s.kind, value: s.value, title: s.title,
+      muted: s.muted, volume: s.volume, chatIndex: null,
+    }],
+    layout: '1',
+    masterVolume: state.masterVolume,
+  };
+  let hash = '';
+  try { hash = btoa(encodeURIComponent(JSON.stringify(data))); } catch (e) {}
+  const url = location.pathname + '?popout=1#' + hash;
+  const win = window.open(url, 'slotpop_' + s.id, 'width=980,height=620');
+  if (!win) {
+    if (isFilled(s)) { openFrameFloat(s); return; }   // ポップアップブロック時
+    showToast('ポップアップがブロックされました。ブラウザの設定で許可してください', 'error');
+    return;
+  }
   try { win.focus(); } catch (e) {}
 }
 
@@ -1803,7 +1815,7 @@ function snapshot() {
     soloMode: state.soloMode,
   };
 }
-function save() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot())); } catch (e) {} }
+function save() { if (IS_POPOUT) return; try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot())); } catch (e) {} }
 function load() {
   const hash = location.hash.replace(/^#/, '');
   if (hash) {
