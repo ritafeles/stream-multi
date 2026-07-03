@@ -338,32 +338,6 @@
     text-align: center; color: var(--text-muted); font-size: 12px; padding: 24px; line-height: 1.6;
   }
 
-  /* ===== Floating popped-out frame (popup-blocker fallback) ===== */
-  .frame-float {
-    position: fixed; width: 480px; height: 300px; z-index: 500;
-    background: #000; border: 1px solid var(--border-strong); border-radius: 8px;
-    display: flex; flex-direction: column; overflow: hidden;
-    box-shadow: 0 12px 40px rgba(0,0,0,0.7); resize: both;
-    min-width: 240px; min-height: 160px;
-  }
-  .frame-float-head {
-    display: flex; align-items: center; gap: 6px; padding: 6px 8px;
-    background: var(--panel); border-bottom: 1px solid var(--border);
-    cursor: grab; user-select: none; flex: 0 0 auto;
-  }
-  .frame-float-head.dragging { cursor: grabbing; }
-  .frame-float-title { flex: 1; min-width: 0; font-size: 12px; color: var(--text-dim);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .frame-float-head .head-btn {
-    background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim);
-    width: 24px; height: 24px; border-radius: 5px; cursor: pointer; font-size: 13px;
-    display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
-  }
-  .frame-float-head .head-btn:hover { color: #fff; border-color: var(--border-strong); }
-  .frame-float-head .head-btn.close:hover { background: var(--danger); border-color: var(--danger); }
-  .frame-float-body { flex: 1; min-height: 0; position: relative; }
-  .frame-float-body iframe { width: 100%; height: 100%; border: 0; display: block; }
-
   /* layouts */
   .layout-1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
   .layout-2h { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
@@ -1131,19 +1105,6 @@ function chatSrcFor(s) {
   }
   return '';
 }
-function embedSrcFor(s, { muted = false } = {}) {
-  const m = muted ? 'true' : 'false';
-  if (s.type === 'youtube') {
-    return `https://www.youtube.com/embed/${encodeURIComponent(s.value)}?autoplay=1&playsinline=1&rel=0&modestbranding=1${muted ? '&mute=1' : ''}`;
-  }
-  if (s.type === 'twitch') {
-    const parents = TWITCH_PARENTS.map(p => `parent=${encodeURIComponent(p)}`).join('&');
-    if (s.kind === 'vod') return `https://player.twitch.tv/?video=${encodeURIComponent(s.value)}&${parents}&muted=${m}&autoplay=true`;
-    if (s.kind === 'clip') return `https://clips.twitch.tv/embed?clip=${encodeURIComponent(s.value)}&autoplay=true&muted=${m}&${parents}`;
-    return `https://player.twitch.tv/?channel=${encodeURIComponent(s.value)}&${parents}&muted=${m}&autoplay=true`;
-  }
-  return '';
-}
 
 // ===== Rendering =====
 function renderGrid() {
@@ -1401,66 +1362,19 @@ function popoutFrame(id) {
   let hash = '';
   try { hash = btoa(encodeURIComponent(JSON.stringify(data))); } catch (e) {}
   const url = location.pathname + '?popout=1#' + hash;
-  const win = window.open(url, 'slotpop_' + s.id, 'width=980,height=620');
-  if (!win) {
-    if (isFilled(s)) { openFrameFloat(s); return; }   // ポップアップブロック時
-    showToast('ポップアップがブロックされました。ブラウザの設定で許可してください', 'error');
-    return;
-  }
-  try { win.focus(); } catch (e) {}
-}
-
-function openFrameFloat(s) {
-  const existing = document.querySelector(`.frame-float[data-id="${s.id}"]`);
-  if (existing) { existing.remove(); return; }
-  const src = embedSrcFor(s, { muted: false });
-  if (!src) { showToast('この配信はポップアウトできません', 'warn'); return; }
-
-  const panel = document.createElement('div');
-  panel.className = 'frame-float';
-  panel.dataset.id = s.id;
-  const offset = document.querySelectorAll('.frame-float').length * 24;
-  panel.style.left = (60 + offset) + 'px';
-  panel.style.top = (60 + offset) + 'px';
-  panel.innerHTML = `
-    <div class="frame-float-head">
-      <span class="frame-float-title"></span>
-      <button class="head-btn close" title="閉じる">×</button>
-    </div>
-    <div class="frame-float-body"></div>`;
-  panel.querySelector('.frame-float-title').textContent = '⧉ ' + (s.title || s.value);
-
-  const iframe = document.createElement('iframe');
-  iframe.src = src;
-  iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
-  iframe.allowFullscreen = true;
-  iframe.referrerPolicy = 'strict-origin-when-cross-origin';
-  panel.querySelector('.frame-float-body').appendChild(iframe);
-
-  panel.querySelector('.close').addEventListener('click', () => panel.remove());
-
-  // ヘッダードラッグで移動
-  const head = panel.querySelector('.frame-float-head');
-  let dragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
-  head.addEventListener('pointerdown', e => {
-    if (e.target.closest('.head-btn')) return;
-    dragging = true; head.classList.add('dragging');
-    const r = panel.getBoundingClientRect();
-    startX = e.clientX; startY = e.clientY; startLeft = r.left; startTop = r.top;
-    head.setPointerCapture(e.pointerId);
-  });
-  head.addEventListener('pointermove', e => {
-    if (!dragging) return;
-    panel.style.left = Math.max(0, startLeft + e.clientX - startX) + 'px';
-    panel.style.top = Math.max(0, startTop + e.clientY - startY) + 'px';
-  });
-  head.addEventListener('pointerup', e => {
-    dragging = false; head.classList.remove('dragging');
-    try { head.releasePointerCapture(e.pointerId); } catch (err) {}
-  });
-
-  document.body.appendChild(panel);
-  showToast('ポップアップがブロックされたため、アプリ内で開きました', 'warn');
+  let win = null;
+  try { win = window.open(url, 'slotpop_' + s.id, 'width=980,height=620,resizable=yes'); } catch (e) {}
+  if (win) { try { win.focus(); } catch (e) {} return; }
+  // window.open がブロックされた場合: 実リンクのクリックはブロックされないため
+  // アンカー経由で新しいタブとして開く（タブをドラッグすれば別ウィンドウにできる）
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  showToast('ポップアップがブロックされたため新しいタブで開きました（タブをドラッグすると別ウィンドウにできます）', 'warn');
 }
 
 // ===== Player mounting =====
