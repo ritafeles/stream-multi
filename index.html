@@ -560,6 +560,7 @@
       <span style="font-size: 12px; color: var(--text-muted); padding: 0 8px;" id="countLabel">0</span>
     </div>
     <div class="group" style="border-right:0; padding-right:2px">
+      <button class="icon-btn" id="popoutNewBtn" title="枠を別ウィンドウで追加">🪟</button>
       <button class="icon-btn" id="settingsBtn" title="設定（視聴者数 API キー）"><span class="ico">⚙</span></button>
       <button class="icon-btn" id="fullscreenBtn" title="全画面 (F)"><span class="ico">⛶</span></button>
       <button class="icon-btn" id="helpBtn" title="ヘルプ"><span class="ico">?</span></button>
@@ -1347,23 +1348,12 @@ function refreshChatSelects() {
 // ===== Frame pop-out =====
 // 枠そのものをアプリの1枠レイアウトとして別ウィンドウで開く（空枠でも可）。
 // ブロックされた場合、配信中の枠はアプリ内フローティングパネルにフォールバック。
-function popoutFrame(id) {
-  const s = state.slots.find(x => x.id === id);
-  if (!s || s.mode !== 'video') return;
-  const data = {
-    slots: [{
-      mode: 'video',
-      type: s.type, kind: s.kind, value: s.value, title: s.title,
-      muted: s.muted, volume: s.volume, chatIndex: null,
-    }],
-    layout: '1',
-    masterVolume: state.masterVolume,
-  };
+function openPopoutWindow(data, name) {
   let hash = '';
   try { hash = btoa(encodeURIComponent(JSON.stringify(data))); } catch (e) {}
   const url = location.pathname + '?popout=1#' + hash;
   let win = null;
-  try { win = window.open(url, 'slotpop_' + s.id, 'width=980,height=620,resizable=yes'); } catch (e) {}
+  try { win = window.open(url, name, 'width=980,height=620,resizable=yes'); } catch (e) {}
   if (win) { try { win.focus(); } catch (e) {} return; }
   // window.open がブロックされた場合: 実リンクのクリックはブロックされないため
   // アンカー経由で新しいタブとして開く（タブをドラッグすれば別ウィンドウにできる）
@@ -1375,6 +1365,27 @@ function popoutFrame(id) {
   a.click();
   a.remove();
   showToast('ポップアップがブロックされたため新しいタブで開きました（タブをドラッグすると別ウィンドウにできます）', 'warn');
+}
+function popoutFrame(id) {
+  const s = state.slots.find(x => x.id === id);
+  if (!s || s.mode !== 'video') return;
+  openPopoutWindow({
+    slots: [{
+      mode: 'video',
+      type: s.type, kind: s.kind, value: s.value, title: s.title,
+      muted: s.muted, volume: s.volume, chatIndex: null,
+    }],
+    layout: '1',
+    masterVolume: state.masterVolume,
+  }, 'slotpop_' + s.id);
+}
+// ツールバーから: 新しい空枠を別ウィンドウで開く
+function popoutNewFrame() {
+  openPopoutWindow({
+    slots: [{ mode: 'video', type: null, kind: null, value: null, title: null, muted: true, volume: state.masterVolume, chatIndex: null }],
+    layout: '1',
+    masterVolume: state.masterVolume,
+  }, 'slotpop_new_' + uuid());
 }
 
 // ===== Player mounting =====
@@ -1839,6 +1850,7 @@ $('fullscreenBtn').addEventListener('click', () => {
   if (document.fullscreenElement) document.exitFullscreen();
   else document.documentElement.requestFullscreen();
 });
+$('popoutNewBtn').addEventListener('click', popoutNewFrame);
 
 function nowTimeStr() {
   const now = new Date();
