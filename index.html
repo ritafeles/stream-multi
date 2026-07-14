@@ -649,6 +649,9 @@ const YT_API_KEY_STORAGE = 'ymv_yt_api_key';
 let ytApiKey = '';
 try { ytApiKey = localStorage.getItem(YT_API_KEY_STORAGE) || ''; } catch (e) {}
 const VIEWER_POLL_MS = 60000;   // 視聴者数の更新間隔（ミリ秒）
+const PLAYBACK_WATCH_MS = 5000;
+const PLAYBACK_STALL_MS = 15000;
+const MAX_RECOVERY_DELAY_MS = 30000;
 const MAX_SLOTS = 16;
 const STORAGE_KEY = 'ymv_state_v3';
 // ポップアウト子ウィンドウ（?popout=1）ではメインの保存状態を上書きしない
@@ -860,6 +863,9 @@ function makeSlot() {
     player: null, audioPoll: null,
     chatSourceId: null,       // for mode 'chat': id of the source slot
     reconnectTimer: null, reconnectAttempts: 0,
+    playbackWatch: null, desiredPlaying: true, offline: false,
+    recoveryStage: 0, lastProgressAt: 0, lastMediaTime: null,
+    nextRecoveryAllowedAt: 0, isLive: false,
     ffTimer: null,            // 早送り(2倍速で追いつき)用ポーリング
   };
 }
@@ -916,6 +922,7 @@ function defaultTitleFor(entry) {
 function destroySlotPlayer(s) {
   if (!s) return;
   stopTwitchAudioPolling(s);
+  clearInterval(s.playbackWatch); s.playbackWatch = null;
   clearInterval(s.ffTimer); s.ffTimer = null;
   clearTimeout(s.reconnectTimer); s.reconnectTimer = null; s.reconnectAttempts = 0;
   if (s.player && s.player.destroy) { try { s.player.destroy(); } catch (e) {} }
@@ -925,6 +932,7 @@ function resetSlot(s) {
   destroySlotPlayer(s);
   s.mode = 'video'; s.type = null; s.kind = null; s.value = null; s.title = null;
   s.chatSourceId = null; s.muted = true;
+  s.desiredPlaying = true; s.offline = false;
 }
 
 // ===== Slot mutations =====
@@ -951,6 +959,7 @@ function applyEntryToSlot(s, e) {
   s.type = e.type; s.kind = e.kind; s.value = e.value;
   s.title = defaultTitleFor(e);
   s.ready = false; s.muted = true; s.chatSourceId = null;
+  s.desiredPlaying = true; s.offline = false;
   if (typeof s.volume !== 'number') s.volume = state.masterVolume;
 }
 function fillSlot(id, raw) {
@@ -1434,14 +1443,98 @@ function popoutNewFrame() {
 function scheduleMount(s, el) {
   if (state.fallbackMode) { mountFallbackIframe(s, el); return; }
   const tryMount = () => {
+    if (!el.isConnected || !isFilled(s)) return true;
     if (s.type === 'youtube') {
       if (state.ytApiReady && window.YT && window.YT.Player) { mountYouTubePlayer(s, el); return true; }
       return false;
     }
-    if (s.type === 'twitch') { mountFallbackIframe(s, el); return true; }
+    if (s.type === 'twitch') {
+      if (s.kind === 'clip') { mountFallbackIframe(s, el); return true; }
+      if (state.twitchApiReady && window.Twitch && window.Twitch.Player) { mountTwitchPlayer(s, el); return true; }
+      return false;
+    }
     return true;
   };
-  if (!tryMount()) state.pendingPlayers.push(tryMount);
+  if (!tryMount()) {
+    state.pendingPlayers.push(tryMount);
+    setTimeout(() => {
+      if (!el.isConnected || !isFilled(s) || s.player || s.ready) return;
+      const apiMissing = (s.type === 'youtube' && !state.ytApiReady) ||
+        (s.type === 'twitch' && s.kind !== 'clip' && !state.twitchApiReady);
+      if (apiMissing) mountFallbackIframe(s, el);
+    }, 6000);
+  }
+}
+
+function resetPlaybackProgress(s, mediaTime = null) {
+  const recovered = s.recoveryStage > 0;
+  s.lastProgressAt = Date.now();
+  s.lastMediaTime = mediaTime;
+  s.recoveryStage = 0;
+  s.reconnectAttempts = 0;
+  s.nextRecoveryAllowedAt = 0;
+  if (recovered) console.info('[recovery] playback resumed', s.type, s.value);
+}
+
+function recreatePlayer(s, reason) {
+  if (!s || !isFilled(s)) return;
+  const el = document.querySelector(`.frame[data-id="${s.id}"]`);
+  if (!el) return;
+  const attempts = s.reconnectAttempts + 1;
+  const delay = Math.min(3000 * (1 << Math.min(attempts - 1, 4)), MAX_RECOVERY_DELAY_MS);
+  console.warn('[recovery] recreating player', { platform: s.type, value: s.value, reason, attempt: attempts, delay });
+  showToast(`${s.type === 'youtube' ? 'YouTube' : 'Twitch'} の再生を復旧しています`, 'warn');
+  destroySlotPlayer(s);
+  s.desiredPlaying = true;
+  s.reconnectAttempts = attempts;
+  s.recoveryStage = 0;
+  s.lastProgressAt = Date.now();
+  s.lastMediaTime = null;
+  s.nextRecoveryAllowedAt = Date.now() + delay;
+  const host = el.querySelector('.player-host');
+  if (host) host.innerHTML = `<div id="player-${s.id}"></div>`;
+  scheduleMount(s, el);
+}
+
+function playbackLooksStalled(s) {
+  if (!s.player || !s.ready || !s.desiredPlaying || s.offline) return false;
+  if (s.type === 'youtube') {
+    try {
+      const stateCode = s.player.getPlayerState();
+      if (stateCode === YT.PlayerState.PAUSED || stateCode === YT.PlayerState.CUED) return false;
+      const t = s.player.getCurrentTime();
+      if (Number.isFinite(t) && (s.lastMediaTime == null || t > s.lastMediaTime + 0.25)) {
+        resetPlaybackProgress(s, t);
+        return false;
+      }
+    } catch (e) { return false; }
+  } else if (s.type === 'twitch') {
+    try {
+      if (s.player.isPaused()) return false;
+      const stats = s.player.getPlaybackStats ? s.player.getPlaybackStats() : null;
+      if (stats && (Number(stats.bufferSize) > 0.1 || Number(stats.playbackRate) > 0)) {
+        resetPlaybackProgress(s);
+        return false;
+      }
+    } catch (e) { return false; }
+  }
+  return Date.now() - s.lastProgressAt >= PLAYBACK_STALL_MS;
+}
+
+function startPlaybackWatch(s) {
+  clearInterval(s.playbackWatch);
+  s.lastProgressAt = Date.now();
+  s.playbackWatch = setInterval(() => {
+    if (Date.now() < s.nextRecoveryAllowedAt || !playbackLooksStalled(s)) return;
+    if (s.recoveryStage === 0) {
+      s.recoveryStage = 1;
+      s.lastProgressAt = Date.now();
+      console.warn('[recovery] stalled; requesting play', s.type, s.value);
+      Adapter.play(s, true);
+    } else {
+      recreatePlayer(s, 'playback stalled after play request');
+    }
+  }, PLAYBACK_WATCH_MS);
 }
 
 function ytErrorMessage(code) {
@@ -1468,25 +1561,32 @@ function mountYouTubePlayer(s, el) {
       events: {
         onReady: (e) => {
           s.ready = true;
+          s.offline = false;
+          try { const data = e.target.getVideoData(); s.isLive = !!(data && data.isLive); } catch (err) {}
           try { if (s.muted) e.target.mute(); else e.target.unMute(); e.target.setVolume(s.volume); } catch (err) {}
           updateMutePill(s.id);
+          startPlaybackWatch(s);
         },
         onStateChange: (e) => {
           if (e.data === YT.PlayerState.PLAYING) {
+            s.desiredPlaying = true;
             updatePlayPill(s.id, true);
-            s.reconnectAttempts = 0;
             clearTimeout(s.reconnectTimer); s.reconnectTimer = null;
+            let t = null;
+            try { t = e.target.getCurrentTime(); } catch (err) {}
+            resetPlaybackProgress(s, t);
           } else if (e.data === YT.PlayerState.PAUSED) {
+            s.desiredPlaying = false;
             updatePlayPill(s.id, false);
           } else if (e.data === YT.PlayerState.ENDED) {
             updatePlayPill(s.id, false);
-            // ライブ配信の一時中断を自動復帰（3s→6s→12s…最大30sで再試行）
-            clearTimeout(s.reconnectTimer);
-            const delay = Math.min(3000 * (1 << s.reconnectAttempts), 30000);
-            s.reconnectTimer = setTimeout(() => {
-              s.reconnectAttempts++;
-              try { if (s.player) s.player.playVideo(); } catch (err) {}
-            }, delay);
+            if (s.isLive && s.desiredPlaying) {
+              s.lastProgressAt = Date.now() - PLAYBACK_STALL_MS;
+            } else {
+              s.desiredPlaying = false;
+            }
+          } else if (e.data === YT.PlayerState.BUFFERING || e.data === YT.PlayerState.UNSTARTED) {
+            if (s.desiredPlaying && !s.lastProgressAt) s.lastProgressAt = Date.now();
           }
         },
         onError: (e) => {
@@ -1501,6 +1601,57 @@ function mountYouTubePlayer(s, el) {
     });
   } catch (err) {
     console.error('Failed to create YT.Player, falling back to iframe', err);
+    mountFallbackIframe(s, el);
+  }
+}
+
+function mountTwitchPlayer(s, el) {
+  const host = el.querySelector(`#player-${s.id}`);
+  if (!host || !window.Twitch || !window.Twitch.Player) return;
+  const options = {
+    width: '100%', height: '100%', parent: TWITCH_PARENTS,
+    autoplay: true, muted: s.muted,
+  };
+  if (s.kind === 'vod') options.video = s.value.startsWith('v') ? s.value : `v${s.value}`;
+  else options.channel = s.value;
+  try {
+    s.player = new Twitch.Player(host.id, options);
+    s.player.addEventListener(Twitch.Player.READY, () => {
+      s.ready = true;
+      s.offline = false;
+      syncTwitchAudio(s);
+      startTwitchAudioPolling(s);
+      startPlaybackWatch(s);
+    });
+    s.player.addEventListener(Twitch.Player.PLAYING, () => {
+      s.desiredPlaying = true;
+      updatePlayPill(s.id, true);
+      resetPlaybackProgress(s);
+    });
+    s.player.addEventListener(Twitch.Player.PAUSE, () => {
+      s.desiredPlaying = false;
+      updatePlayPill(s.id, false);
+    });
+    s.player.addEventListener(Twitch.Player.ENDED, () => {
+      updatePlayPill(s.id, false);
+      if (s.kind === 'vod') s.desiredPlaying = false;
+      else if (s.desiredPlaying) s.lastProgressAt = Date.now() - PLAYBACK_STALL_MS;
+    });
+    s.player.addEventListener(Twitch.Player.ONLINE, () => {
+      s.offline = false;
+      if (s.desiredPlaying) { s.lastProgressAt = Date.now(); Adapter.play(s, true); }
+    });
+    s.player.addEventListener(Twitch.Player.OFFLINE, () => {
+      s.offline = true;
+      updatePlayPill(s.id, false);
+      console.info('[recovery] Twitch channel is offline', s.value);
+    });
+    s.player.addEventListener(Twitch.Player.PLAYBACK_BLOCKED, () => {
+      s.desiredPlaying = false;
+      console.warn('[recovery] Twitch autoplay was blocked', s.value);
+    });
+  } catch (err) {
+    console.error('Failed to create Twitch.Player, falling back to iframe', err);
     mountFallbackIframe(s, el);
   }
 }
@@ -1619,8 +1770,8 @@ function stopTwitchAudioPolling(s) {
 
 // ===== Player adapter =====
 const Adapter = {
-  play(s)  { if (!s.player) return; try { if (s.type === 'youtube') s.player.playVideo(); else if (s.type === 'twitch') s.player.play(); } catch (e) {} },
-  pause(s) { if (!s.player) return; try { if (s.type === 'youtube') s.player.pauseVideo(); else if (s.type === 'twitch') s.player.pause(); } catch (e) {} },
+  play(s)  { s.desiredPlaying = true; if (!s.player || s.offline) return; try { if (s.type === 'youtube') s.player.playVideo(); else if (s.type === 'twitch') s.player.play(); } catch (e) {} },
+  pause(s) { s.desiredPlaying = false; s.recoveryStage = 0; if (!s.player) return; try { if (s.type === 'youtube') s.player.pauseVideo(); else if (s.type === 'twitch') s.player.pause(); } catch (e) {} },
   mute(s)  { if (!s.player) return; try { if (s.type === 'youtube') s.player.mute(); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
   unmute(s){ if (!s.player) return; try { if (s.type === 'youtube') s.player.unMute(); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
   setVolume(s, val) { if (!s.player) return; try { if (s.type === 'youtube') s.player.setVolume(val); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
