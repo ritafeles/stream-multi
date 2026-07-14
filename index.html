@@ -689,7 +689,10 @@ const IS_FILE_PROTOCOL = location.protocol === 'file:';
 const HAS_VALID_ORIGIN = location.protocol === 'http:' || location.protocol === 'https:';
 
 // YouTube IFrame API
-window.onYouTubeIframeAPIReady = () => { state.ytApiReady = true; flushPending(); };
+window.onYouTubeIframeAPIReady = () => {
+  state.ytApiReady = !!(window.YT && window.YT.Player);
+  flushPending();
+};
 (function loadYTApi() {
   const tag = document.createElement('script');
   tag.src = 'https://www.youtube.com/iframe_api';
@@ -866,6 +869,7 @@ function makeSlot() {
     playbackWatch: null, desiredPlaying: true, offline: false,
     recoveryStage: 0, lastProgressAt: 0, lastMediaTime: null,
     nextRecoveryAllowedAt: 0, isLive: false,
+    ytAttachPending: false,
     ffTimer: null,            // 早送り(2倍速で追いつき)用ポーリング
   };
 }
@@ -927,6 +931,7 @@ function destroySlotPlayer(s) {
   clearTimeout(s.reconnectTimer); s.reconnectTimer = null; s.reconnectAttempts = 0;
   if (s.player && s.player.destroy) { try { s.player.destroy(); } catch (e) {} }
   s.player = null; s.ready = false;
+  s.ytAttachPending = false;
 }
 function resetSlot(s) {
   destroySlotPlayer(s);
@@ -1443,14 +1448,17 @@ function popoutNewFrame() {
 function scheduleMount(s, el) {
   if (state.fallbackMode) { mountFallbackIframe(s, el); return; }
   const tryMount = () => {
-    if (!el.isConnected || !isFilled(s)) return true;
+    if (!isFilled(s)) return true;
     if (s.type === 'youtube') {
-      if (state.ytApiReady && window.YT && window.YT.Player) { mountYouTubePlayer(s, el); return true; }
-      return false;
+      mountYouTubePlayer(s, el);
+      return true;
     }
     if (s.type === 'twitch') {
       if (s.kind === 'clip') { mountFallbackIframe(s, el); return true; }
-      if (state.twitchApiReady && window.Twitch && window.Twitch.Player) { mountTwitchPlayer(s, el); return true; }
+      if (state.twitchApiReady && window.Twitch && window.Twitch.Player) {
+        setTimeout(() => { if (el.isConnected && isFilled(s)) mountTwitchPlayer(s, el); }, 0);
+        return true;
+      }
       return false;
     }
     return true;
@@ -1458,10 +1466,11 @@ function scheduleMount(s, el) {
   if (!tryMount()) {
     state.pendingPlayers.push(tryMount);
     setTimeout(() => {
-      if (!el.isConnected || !isFilled(s) || s.player || s.ready) return;
-      const apiMissing = (s.type === 'youtube' && !state.ytApiReady) ||
-        (s.type === 'twitch' && s.kind !== 'clip' && !state.twitchApiReady);
-      if (apiMissing) mountFallbackIframe(s, el);
+      if (!el.isConnected || !isFilled(s)) return;
+      const host = el.querySelector('.player-host');
+      if (host && host.querySelector('iframe')) return;
+      console.warn('[player] API player did not create an iframe; using fallback', s.type, s.value);
+      mountFallbackIframe(s, el);
     }, 6000);
   }
 }
@@ -1553,11 +1562,30 @@ function mountYouTubePlayer(s, el) {
   if (!host) return;
   const playerVars = { autoplay: 1, mute: 1, playsinline: 1, rel: 0, modestbranding: 1, enablejsapi: 1 };
   if (HAS_VALID_ORIGIN) playerVars.origin = location.origin;
+  const params = new URLSearchParams(playerVars);
+  host.innerHTML = '';
+  const iframe = document.createElement('iframe');
+  iframe.id = `yt-frame-${s.id}`;
+  iframe.src = `https://www.youtube.com/embed/${encodeURIComponent(s.value)}?${params}`;
+  iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
+  iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+  iframe.allowFullscreen = true;
+  host.appendChild(iframe);
+  if (!(window.YT && window.YT.Player)) {
+    if (!s.ytAttachPending) {
+      s.ytAttachPending = true;
+      state.pendingPlayers.push(() => {
+        if (!isFilled(s) || !el.isConnected) { s.ytAttachPending = false; return true; }
+        if (!(window.YT && window.YT.Player)) return false;
+        s.ytAttachPending = false;
+        mountYouTubePlayer(s, el);
+        return true;
+      });
+    }
+    return;
+  }
   try {
-    s.player = new YT.Player(host, {
-      videoId: s.value,
-      host: 'https://www.youtube.com',
-      playerVars,
+    s.player = new YT.Player(iframe, {
       events: {
         onReady: (e) => {
           s.ready = true;
