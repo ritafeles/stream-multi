@@ -125,6 +125,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         with urllib.request.urlopen(req, timeout=15) as res:
             data = json.loads(res.read().decode('utf-8'))
 
+        # 2026-07以降のAPIは、正規化済み配信オブジェクトを配列で返す。
+        # 旧JSON:API形式も残して、取得元の段階的な切り替えに耐えるようにする。
+        if isinstance(data, list):
+            out = []
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                channel = item.get('channel') or {}
+                out.append({
+                    'title': item.get('title'),
+                    'url': item.get('url'),
+                    'thumbnail-url': item.get('thumbnail-url'),
+                    'fallback-thumbnail-url': item.get('fallback-thumbnail-url'),
+                    'start-at': item.get('start-at'),
+                    'status': item.get('status'),
+                    'youtube-channel': {
+                        'name': channel.get('name'),
+                        'thumbnail-url': channel.get('thumbnail-url'),
+                    },
+                })
+            out.sort(key=lambda s: s.get('start-at') or '')
+            return out
+
         # included の youtube_channel を id で引けるようにする
         channels = {}
         for item in data.get('included', []):

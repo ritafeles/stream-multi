@@ -20,6 +20,28 @@ def _fetch_streams(day_offset):
     with urllib.request.urlopen(req, timeout=15) as res:
         data = json.loads(res.read().decode('utf-8'))
 
+    # 現行APIは正規化済みオブジェクトの配列。旧JSON:API形式にも対応する。
+    if isinstance(data, list):
+        out = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            channel = item.get('channel') or {}
+            out.append({
+                'title': item.get('title'),
+                'url': item.get('url'),
+                'thumbnail-url': item.get('thumbnail-url'),
+                'fallback-thumbnail-url': item.get('fallback-thumbnail-url'),
+                'start-at': item.get('start-at'),
+                'status': item.get('status'),
+                'youtube-channel': {
+                    'name': channel.get('name'),
+                    'thumbnail-url': channel.get('thumbnail-url'),
+                },
+            })
+        out.sort(key=lambda s: s.get('start-at') or '')
+        return out
+
     channels = {}
     for item in data.get('included', []):
         if item.get('type') == 'youtube_channel':
