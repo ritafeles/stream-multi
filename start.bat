@@ -35,5 +35,5 @@ echo Starting local server at http://localhost:%PORT%/
 echo Press Ctrl+C in this window to stop the server.
 echo.
 start "" "http://localhost:%PORT%"
-%PY% -m http.server %PORT% --bind 127.0.0.1
+%PY% server.py
 endlocal

@@ -6,8 +6,11 @@
 ## 構成
 ```
 index.html                  … フロントエンド（静的配信）
+assets/                     … フロントエンドのCSS / JavaScript
 api/nijisanji-streams.py     … /api/nijisanji-streams
 api/ikioi-streams.py         … /api/ikioi-streams?keyword=X
+api/vmiru-streams.py         … /api/vmiru-streams
+stream_sources/              … ローカル・Vercel共通の取得/正規化/キャッシュ処理
 vercel.json                  … 関数設定
 server.py                    … ローカル開発用（Vercel では未使用・.vercelignore 済み）
 ```
