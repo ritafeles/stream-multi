@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>YouTube + Twitch 同時視聴ビューワー</title>
-<link rel="stylesheet" href="assets/styles.css">
+<link rel="stylesheet" href="assets/styles.css?v=20260922">
 </head>
 <body>
 <div id="app">
@@ -42,12 +42,15 @@
       <button class="icon-btn" id="settingsBtn" title="設定（視聴者数 API キー）"><span class="ico">⚙</span></button>
       <button class="icon-btn" id="fullscreenBtn" title="全画面 (F)"><span class="ico">⛶</span></button>
       <button class="icon-btn" id="helpBtn" title="ヘルプ"><span class="ico">?</span></button>
+      <button class="icon-btn" id="hideToolbarBtn" title="ヘッダーを隠す (H)" aria-label="ヘッダーを隠す">︿</button>
     </div>
   </div>
 
   <!-- ===== Main ===== -->
   <main id="main"></main>
 </div>
+
+<button id="showToolbarBtn" type="button" aria-label="ヘッダーを表示">﹀ ヘッダーを表示</button>
 
 <div id="toast"></div>
 
@@ -119,6 +122,6 @@
   </div>
 </div>
 
-<script src="assets/app.js"></script>
+<script src="assets/app.js?v=20260922"></script>
 </body>
 </html>
