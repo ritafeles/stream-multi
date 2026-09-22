@@ -29,6 +29,19 @@
     grid-template-rows: 44px 1fr;
     height: 100vh;
   }
+  #app.toolbar-hidden { grid-template-rows: 1fr; }
+  #app.toolbar-hidden #toolbar { display: none; }
+
+  #showToolbarBtn {
+    position: fixed; top: 6px; right: 8px; z-index: 30;
+    display: none; align-items: center; gap: 5px;
+    height: 28px; padding: 0 10px; border-radius: 6px;
+    border: 1px solid var(--border-strong); background: rgba(21, 21, 26, 0.92);
+    color: var(--text-dim); font-size: 12px; cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+  }
+  #showToolbarBtn:hover { color: #fff; border-color: var(--accent); background: var(--panel-2); }
+  #app.toolbar-hidden + #showToolbarBtn { display: inline-flex; }
 
   .logo {
     display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px;

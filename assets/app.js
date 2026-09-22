@@ -10,6 +10,7 @@ const PLAYBACK_STALL_MS = 15000;
 const MAX_RECOVERY_DELAY_MS = 30000;
 const MAX_SLOTS = 16;
 const STORAGE_KEY = 'ymv_state_v3';
+const TOOLBAR_HIDDEN_STORAGE = 'ymv_toolbar_hidden';
 // ポップアウト子ウィンドウ（?popout=1）ではメインの保存状態を上書きしない
 const IS_POPOUT = new URLSearchParams(location.search).has('popout');
 const state = {
@@ -39,6 +40,23 @@ const $ = (id) => document.getElementById(id);
 const main = $('main');
 const countLabel = $('countLabel');
 const toast = $('toast');
+
+function setToolbarHidden(hidden, persist = true) {
+  const app = $('app');
+  if (!app) return;
+  app.classList.toggle('toolbar-hidden', hidden);
+  $('hideToolbarBtn').setAttribute('aria-expanded', String(!hidden));
+  $('showToolbarBtn').setAttribute('aria-expanded', String(!hidden));
+  if (persist) {
+    try { localStorage.setItem(TOOLBAR_HIDDEN_STORAGE, hidden ? '1' : '0'); } catch (e) {}
+  }
+}
+
+function loadToolbarVisibility() {
+  let hidden = false;
+  try { hidden = localStorage.getItem(TOOLBAR_HIDDEN_STORAGE) === '1'; } catch (e) {}
+  setToolbarHidden(hidden, false);
+}
 
 function apiErrorMessage(payload) {
   if (!payload || !payload.error) return null;
@@ -1433,6 +1451,8 @@ $('fullscreenBtn').addEventListener('click', () => {
   if (document.fullscreenElement) document.exitFullscreen();
   else document.documentElement.requestFullscreen();
 });
+$('hideToolbarBtn').addEventListener('click', () => setToolbarHidden(true));
+$('showToolbarBtn').addEventListener('click', () => setToolbarHidden(false));
 $('popoutNewBtn').addEventListener('click', popoutNewFrame);
 // 他ウィンドウ(メイン)の保存状態が変わったらチャット選択肢を更新
 window.addEventListener('storage', e => {
@@ -1507,6 +1527,7 @@ $('helpBtn').addEventListener('click', () => {
     '・R     : すべて先頭から',
     '・F     : 全画面',
     '・S     : ソロモード',
+    '・H     : ヘッダー表示 / 非表示',
     '・1〜9  : レイアウト変更',
     '・Del   : フォーカス中の枠を空にする',
   ].join('\n'));
@@ -1529,6 +1550,10 @@ document.addEventListener('keydown', (e) => {
     case 'r': case 'R': e.preventDefault(); restartAll(); break;
     case 'f': case 'F': e.preventDefault(); $('fullscreenBtn').click(); break;
     case 's': case 'S': e.preventDefault(); toggleSolo(); break;
+    case 'h': case 'H':
+      e.preventDefault();
+      setToolbarHidden(!$('app').classList.contains('toolbar-hidden'));
+      break;
     case 'Delete': case 'Backspace':
       if (state.focusedId) { e.preventDefault(); emptySlot(state.focusedId); }
       break;
@@ -1827,6 +1852,7 @@ $('vmiruCloseBtn').addEventListener('click', closeVmiruPanel);
 $('vmiruOverlay').addEventListener('click', e => { if (e.target === $('vmiruOverlay')) closeVmiruPanel(); });
 
 // ===== Init =====
+loadToolbarVisibility();
 renderLayoutTiles();
 load();
 if (state.slots.length === 0) {
