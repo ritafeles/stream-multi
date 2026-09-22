@@ -8,6 +8,7 @@ const VIEWER_POLL_MS = 60000;   // 視聴者数の更新間隔（ミリ秒）
 const PLAYBACK_WATCH_MS = 5000;
 const PLAYBACK_STALL_MS = 15000;
 const MAX_RECOVERY_DELAY_MS = 30000;
+const ENDED_RECOVERY_DELAYS = [5000, 10000, 20000, 40000, 80000, 120000];
 const MAX_SLOTS = 16;
 const STORAGE_KEY = 'ymv_state_v3';
 const TOOLBAR_HIDDEN_STORAGE = 'ymv_toolbar_hidden';
@@ -246,6 +247,7 @@ function makeSlot() {
     player: null, audioPoll: null,
     chatSourceId: null,       // for mode 'chat': id of the source slot
     reconnectTimer: null, reconnectAttempts: 0,
+    endedRecoveryAttempts: 0, resumeAt: null,
     playbackWatch: null, desiredPlaying: true, offline: false,
     recoveryStage: 0, lastProgressAt: 0, lastMediaTime: null,
     nextRecoveryAllowedAt: 0, isLive: false,
@@ -318,6 +320,7 @@ function resetSlot(s) {
   s.mode = 'video'; s.type = null; s.kind = null; s.value = null; s.title = null;
   s.chatSourceId = null; s.muted = true;
   s.desiredPlaying = true; s.offline = false;
+  s.endedRecoveryAttempts = 0; s.resumeAt = null;
 }
 
 // ===== Slot mutations =====
@@ -376,6 +379,8 @@ function fillFirstEmpty(raw) {
 function reloadSlot(id) {
   const s = state.slots.find(x => x.id === id);
   if (!s || !isFilled(s)) return;
+  s.endedRecoveryAttempts = 0;
+  s.resumeAt = null;
   const el = document.querySelector(`.frame[data-id="${id}"]`);
   if (!el) return;
   destroySlotPlayer(s);
@@ -862,7 +867,39 @@ function resetPlaybackProgress(s, mediaTime = null) {
   s.recoveryStage = 0;
   s.reconnectAttempts = 0;
   s.nextRecoveryAllowedAt = 0;
+  if (s.endedRecoveryAttempts > 0 && Number.isFinite(mediaTime) &&
+      (!Number.isFinite(s.resumeAt) || mediaTime > s.resumeAt + 5)) {
+    console.info('[recovery] ended stream resumed', s.type, s.value);
+    s.endedRecoveryAttempts = 0;
+    s.resumeAt = null;
+  }
   if (recovered) console.info('[recovery] playback resumed', s.type, s.value);
+}
+
+function scheduleYouTubeEndedRecovery(s, player) {
+  if (!s || !isFilled(s) || !s.desiredPlaying) return;
+  const attempt = s.endedRecoveryAttempts || 0;
+  if (attempt >= ENDED_RECOVERY_DELAYS.length) {
+    s.desiredPlaying = false;
+    showToast('配信の再開を確認できませんでした。↺で再読み込みできます', 'warn');
+    return;
+  }
+
+  let current = null;
+  try { current = player.getCurrentTime(); } catch (e) {}
+  if (Number.isFinite(current) && current > 1) s.resumeAt = Math.max(0, current - 1);
+
+  const delay = ENDED_RECOVERY_DELAYS[attempt];
+  s.endedRecoveryAttempts = attempt + 1;
+  clearTimeout(s.reconnectTimer);
+  console.warn('[recovery] YouTube ended; scheduling live-stream recheck', {
+    value: s.value, attempt: s.endedRecoveryAttempts, delay,
+  });
+  s.reconnectTimer = setTimeout(() => {
+    s.reconnectTimer = null;
+    if (!isFilled(s) || !s.desiredPlaying) return;
+    recreatePlayer(s, 'YouTube ended; checking whether the live stream resumed');
+  }, delay);
 }
 
 function recreatePlayer(s, reason) {
@@ -942,6 +979,7 @@ function mountYouTubePlayer(s, el) {
   if (!host) return;
   const playerVars = { autoplay: 1, mute: 1, playsinline: 1, rel: 0, modestbranding: 1, enablejsapi: 1 };
   if (HAS_VALID_ORIGIN) playerVars.origin = location.origin;
+  if (Number.isFinite(s.resumeAt) && s.resumeAt > 0) playerVars.start = Math.floor(s.resumeAt);
   const params = new URLSearchParams(playerVars);
   host.innerHTML = '';
   const iframe = document.createElement('iframe');
@@ -988,11 +1026,7 @@ function mountYouTubePlayer(s, el) {
             updatePlayPill(s.id, false);
           } else if (e.data === YT.PlayerState.ENDED) {
             updatePlayPill(s.id, false);
-            if (s.isLive && s.desiredPlaying) {
-              s.lastProgressAt = Date.now() - PLAYBACK_STALL_MS;
-            } else {
-              s.desiredPlaying = false;
-            }
+            scheduleYouTubeEndedRecovery(s, e.target);
           } else if (e.data === YT.PlayerState.BUFFERING || e.data === YT.PlayerState.UNSTARTED) {
             if (s.desiredPlaying && !s.lastProgressAt) s.lastProgressAt = Date.now();
           }
@@ -1242,8 +1276,18 @@ function setVolume(id, val) {
   Adapter.setVolume(s, val); save();
 }
 function seek(id, sec)    { const s = state.slots.find(x => x.id === id); if (s) Adapter.seek(s, sec); }
-function playOne(id)      { const s = state.slots.find(x => x.id === id); if (s) Adapter.play(s); }
-function togglePlay(id)   { const s = state.slots.find(x => x.id === id); if (!s) return; Adapter.isPlaying(s) ? Adapter.pause(s) : Adapter.play(s); }
+function playOne(id) {
+  const s = state.slots.find(x => x.id === id);
+  if (!s) return;
+  s.endedRecoveryAttempts = 0;
+  Adapter.play(s);
+}
+function togglePlay(id) {
+  const s = state.slots.find(x => x.id === id);
+  if (!s) return;
+  if (Adapter.isPlaying(s)) Adapter.pause(s);
+  else { s.endedRecoveryAttempts = 0; Adapter.play(s); }
+}
 
 // ===== Fast-forward (2x catch-up to live edge) =====
 const FF_LIVE_THRESHOLD = 4;  // 残りこの秒数以内になったらライブ最新とみなす
