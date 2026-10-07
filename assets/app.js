@@ -11,6 +11,9 @@ const MAX_RECOVERY_DELAY_MS = 30000;
 const ENDED_RECOVERY_DELAYS = [5000, 10000, 20000, 40000, 80000, 120000];
 const MAX_SLOTS = 16;
 const STORAGE_KEY = 'ymv_state_v3';
+// v2: slot.volume は「枠の音量 0〜100」、実際の音量 = 枠の音量 × マスター音量 / 100
+const VOLUME_MODEL = 2;
+const DEFAULT_SLOT_VOLUME = 100;
 const TOOLBAR_HIDDEN_STORAGE = 'ymv_toolbar_hidden';
 // ポップアウト子ウィンドウ（?popout=1）ではメインの保存状態を上書きしない
 const IS_POPOUT = new URLSearchParams(location.search).has('popout');
@@ -68,6 +71,28 @@ function apiErrorMessage(payload) {
 // ===== Embed environment =====
 const IS_FILE_PROTOCOL = location.protocol === 'file:';
 const HAS_VALID_ORIGIN = location.protocol === 'http:' || location.protocol === 'https:';
+const IS_LOCAL_HOST = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+
+// サーバーの /api/* を呼ぶ。エラー時はサーバーが返した日本語メッセージを優先して投げる
+async function fetchApi(path) {
+  if (IS_FILE_PROTOCOL) {
+    throw new Error('この機能は index.html を直接開いた状態では使えません。start.bat（または python server.py）で起動してください。');
+  }
+  let res;
+  try {
+    res = await fetch(path, { cache: 'no-store' });
+  } catch (e) {
+    throw new Error(IS_LOCAL_HOST
+      ? `サーバーに接続できません（${location.origin}）。start.bat（または python server.py）が起動しているか確認してください。`
+      : 'サーバーに接続できません。時間をおいて再度お試しください。');
+  }
+  let json = null;
+  try { json = await res.json(); } catch (e) {}
+  const apiError = apiErrorMessage(json);
+  if (apiError) throw new Error(apiError);
+  if (!res.ok || !json) throw new Error(`サーバーエラーが発生しました (HTTP ${res.status})`);
+  return json;
+}
 
 // YouTube IFrame API
 window.onYouTubeIframeAPIReady = () => {
@@ -110,7 +135,7 @@ function enterFallbackMode(msg) {
   if (state.fallbackMode) return;
   state.fallbackMode = true;
   showToast(msg, 'warn');
-  ['playAllBtn','pauseAllBtn','muteAllBtn','unmuteAllBtn','soloBtn']
+  ['playAllBtn','pauseAllBtn','syncBtn','muteAllBtn','unmuteAllBtn','soloBtn']
     .forEach(id => { const b = $(id); if (b) b.disabled = true; });
   renderGrid();
 }
@@ -176,65 +201,7 @@ function renderLayoutTiles() {
   }
 }
 
-// ===== Parse =====
-// Returns { type:'youtube'|'twitch', kind:'video'|'channel'|'vod'|'clip', value } | null
-function parseEntry(raw) {
-  const s = (raw || '').trim();
-  if (!s) return null;
-  let m;
-  if ((m = s.match(/^(?:twitch|tw):(.+)$/i))) return { type: 'twitch', kind: 'channel', value: m[1].trim() };
-  if ((m = s.match(/^(?:youtube|yt):(.+)$/i))) return { type: 'youtube', kind: 'video', value: m[1].trim() };
-  if (/^[A-Za-z0-9_-]{11}$/.test(s)) return { type: 'youtube', kind: 'video', value: s };
-  try {
-    const url = new URL(s.startsWith('http') ? s : 'https://' + s);
-    const host = url.hostname.replace(/^www\./, '');
-    if (host === 'twitch.tv' || host.endsWith('.twitch.tv')) {
-      const parts = url.pathname.split('/').filter(Boolean);
-      if (host === 'clips.twitch.tv' && parts[0]) return { type: 'twitch', kind: 'clip', value: parts[0] };
-      if (parts[0] === 'videos' && parts[1]) return { type: 'twitch', kind: 'vod', value: parts[1] };
-      if (parts.length >= 3 && parts[1] === 'clip') return { type: 'twitch', kind: 'clip', value: parts[2] };
-      if (parts[0]) return { type: 'twitch', kind: 'channel', value: parts[0] };
-    }
-    if (host === 'player.twitch.tv') {
-      const ch = url.searchParams.get('channel');
-      const vid = url.searchParams.get('video');
-      const clip = url.searchParams.get('clip');
-      if (ch) return { type: 'twitch', kind: 'channel', value: ch };
-      if (vid) return { type: 'twitch', kind: 'vod', value: vid };
-      if (clip) return { type: 'twitch', kind: 'clip', value: clip };
-    }
-    if (host === 'youtu.be') {
-      const id = url.pathname.split('/').filter(Boolean)[0];
-      if (id && /^[A-Za-z0-9_-]{11}$/.test(id)) return { type: 'youtube', kind: 'video', value: id };
-    }
-    if (host === 'youtube.com' || host.endsWith('.youtube.com') ||
-        host === 'youtube-nocookie.com' || host.endsWith('.youtube-nocookie.com')) {
-      const v = url.searchParams.get('v');
-      if (v && /^[A-Za-z0-9_-]{11}$/.test(v)) return { type: 'youtube', kind: 'video', value: v };
-      let m2;
-      if ((m2 = url.pathname.match(/^\/(?:live|embed|shorts|v)\/([A-Za-z0-9_-]{11})/))) {
-        return { type: 'youtube', kind: 'video', value: m2[1] };
-      }
-    }
-  } catch (e) {}
-  const ytm = s.match(/[A-Za-z0-9_-]{11}/);
-  if (ytm) return { type: 'youtube', kind: 'video', value: ytm[0] };
-  return null;
-}
-function parseInput(raw) {
-  const parts = (raw || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-  const seen = new Set();
-  const entries = [];
-  for (const p of parts) {
-    const e = parseEntry(p);
-    if (!e) continue;
-    const key = `${e.type}:${e.kind}:${e.value.toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    entries.push(e);
-  }
-  return entries;
-}
+// URL / ID の解析は assets/parse.js（parseEntry / parseInput / isValidStoredEntry）
 
 // ===== Slot model =====
 function uuid() { return Math.random().toString(36).slice(2, 10); }
@@ -243,7 +210,7 @@ function makeSlot() {
     id: uuid(),
     mode: 'video',            // 'video' | 'chat'
     type: null, kind: null, value: null, title: null,
-    ready: false, muted: true, volume: state.masterVolume,
+    ready: false, muted: true, volume: DEFAULT_SLOT_VOLUME,
     player: null, audioPoll: null,
     chatSourceId: null,       // for mode 'chat': id of the source slot
     reconnectTimer: null, reconnectAttempts: 0,
@@ -324,14 +291,19 @@ function resetSlot(s) {
 }
 
 // ===== Slot mutations =====
+function isUsed(s) { return isFilled(s) || s.mode === 'chat'; }
 function setLayout(id) {
+  if (!LAYOUTS.some(l => l.id === id)) return;
   const need = layoutCells(id);
   if (need < state.slots.length) {
-    const removing = state.slots.slice(need);
-    const filled = removing.filter(s => isFilled(s) || (s.mode === 'chat' && s.chatSourceId)).length;
-    if (filled > 0 && !confirm(`このレイアウトでは ${filled} 個の枠が削除されます。続けますか？`)) return;
+    // 使用中の枠が後ろにあれば前に詰めて、空き枠から先に削除する
+    let slots = state.slots;
+    if (slots.slice(need).some(isUsed)) slots = [...slots.filter(isUsed), ...slots.filter(s => !isUsed(s))];
+    const removing = slots.slice(need);
+    const lost = removing.filter(isUsed).length;
+    if (lost > 0 && !confirm(`このレイアウトでは ${lost} 個の枠が削除されます。続けますか？`)) return;
     removing.forEach(destroySlotPlayer);
-    state.slots = state.slots.slice(0, need);
+    state.slots = slots.slice(0, need);
   } else {
     while (state.slots.length < need) state.slots.push(makeSlot());
   }
@@ -345,16 +317,35 @@ function applyEntryToSlot(s, e) {
   destroySlotPlayer(s);
   s.mode = 'video';
   s.type = e.type; s.kind = e.kind; s.value = e.value;
-  s.title = defaultTitleFor(e);
+  s.title = e.title || defaultTitleFor(e);
   s.ready = false; s.muted = true; s.chatSourceId = null;
-  s.desiredPlaying = true; s.offline = false;
-  if (typeof s.volume !== 'number') s.volume = state.masterVolume;
+  s.desiredPlaying = true; s.offline = false; s.isLive = false;
+  s.endedRecoveryAttempts = 0; s.resumeAt = null; s.viewers = undefined;
+  if (typeof s.volume !== 'number') s.volume = DEFAULT_SLOT_VOLUME;
 }
-function fillSlot(id, raw) {
-  const entries = parseInput(raw);
-  if (!entries.length) { showToast('有効な URL / ID が見つかりません', 'error'); return; }
+const INVALID_INPUT_MSG = '有効な URL / ID が見つかりません（YouTube の動画・チャンネル / Twitch のチャンネル・VOD・クリップに対応）';
+// YouTube チャンネル指定（@handle / UC…）を、いま配信中の動画に置き換える
+async function resolveEntries(entries) {
+  const out = [];
+  for (const e of entries) {
+    if (e.type !== 'youtube' || e.kind !== 'live') { out.push(e); continue; }
+    try {
+      const json = await fetchApi(`/api/youtube-live?channel=${encodeURIComponent(e.value)}`);
+      out.push({ type: 'youtube', kind: 'video', value: json.videoId, title: json.title || null });
+    } catch (err) {
+      showToast(`${e.value}: ${err.message}`, 'error');
+    }
+  }
+  return out;
+}
+// meta.title: 配信一覧などで分かっているタイトル（1件目に適用）
+async function fillSlot(id, raw, meta = {}) {
+  const parsed = parseInput(raw);
+  if (!parsed.length) { showToast(INVALID_INPUT_MSG, 'error'); return false; }
+  const entries = await resolveEntries(parsed);
   const s = state.slots.find(x => x.id === id);
-  if (!s) return;
+  if (!entries.length || !s) return false;
+  if (meta.title && !entries[0].title) entries[0].title = meta.title;
   applyEntryToSlot(s, entries[0]);
   // extra pasted lines spill into remaining empty slots
   for (let i = 1; i < entries.length; i++) {
@@ -363,10 +354,12 @@ function fillSlot(id, raw) {
     applyEntryToSlot(slot, entries[i]);
   }
   renderGrid(); save(); fetchTitles(); fetchViewerCounts();
+  return true;
 }
-function fillFirstEmpty(raw) {
-  const entries = parseInput(raw);
-  if (!entries.length) { showToast('URL / ID が見つかりません', 'error'); return; }
+async function fillFirstEmpty(raw) {
+  const parsed = parseInput(raw);
+  if (!parsed.length) { showToast(INVALID_INPUT_MSG, 'error'); return; }
+  const entries = await resolveEntries(parsed);
   let placed = 0;
   for (const e of entries) {
     const slot = state.slots.find(s => !isFilled(s) && s.mode === 'video');
@@ -391,9 +384,24 @@ function reloadSlot(id) {
 function emptySlot(id) {
   const s = state.slots.find(x => x.id === id);
   if (!s) return;
+  const before = isFilled(s) ? { type: s.type, kind: s.kind, value: s.value, title: s.title } : null;
+  const chatWatchers = state.slots.filter(o => o.mode === 'chat' && o.chatSourceId === id).map(o => o.id);
   resetSlot(s);
   state.slots.forEach(o => { if (o.mode === 'chat' && o.chatSourceId === id) o.chatSourceId = null; });
+  if (state.focusedId === id) state.focusedId = null;
   renderGrid(); save();
+  if (before) {
+    showToast(`「${before.title || before.value}」を閉じました`, '', {
+      label: '元に戻す',
+      run: () => {
+        const slot = state.slots.find(x => x.id === id);
+        if (!slot || isUsed(slot)) { showToast('枠がすでに使われているため元に戻せません', 'warn'); return; }
+        applyEntryToSlot(slot, before);
+        state.slots.forEach(o => { if (chatWatchers.includes(o.id) && o.mode === 'chat' && !o.chatSourceId) o.chatSourceId = id; });
+        renderGrid(); save(); fetchViewerCounts();
+      },
+    });
+  }
 }
 function setSlotChat(id) {
   const s = state.slots.find(x => x.id === id);
@@ -411,6 +419,13 @@ function setChatSource(id, sourceId) {
   const s = state.slots.find(x => x.id === id);
   if (!s) return;
   s.chatSourceId = sourceId || null;
+  renderGrid(); save();
+}
+function swapSlots(aId, bId) {
+  const a = state.slots.findIndex(s => s.id === aId);
+  const b = state.slots.findIndex(s => s.id === bId);
+  if (a < 0 || b < 0 || a === b) return;
+  [state.slots[a], state.slots[b]] = [state.slots[b], state.slots[a]];
   renderGrid(); save();
 }
 function moveSlot(fromId, toId, after) {
@@ -469,45 +484,68 @@ function updateLivePill(s) {
   applyLivePill(el, s);
 }
 
-async function fetchViewerCounts() {
-  if (!ytApiKey) return;
-  const vids = state.slots.filter(s => isFilled(s) && s.type === 'youtube' && s.kind === 'video');
-  if (!vids.length) return;
-  const ids = [...new Set(vids.map(s => s.value))];
-  const map = {};
+// YouTube Data API（キー設定時）→ ぶいみるの配信一覧（キー不要・Twitch も対応）の順に視聴者数を探す
+let viewerKeyErrorShown = false;
+let viewerFetching = false;
+async function fetchYouTubeApiViewers(ids, counts) {
   for (let i = 0; i < ids.length; i += 50) {
     const chunk = ids.slice(i, i + 50);
-    try {
-      const url = `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${chunk.join(',')}&key=${encodeURIComponent(ytApiKey)}`;
-      const r = await fetch(url, { cache: 'no-store' });
-      if (!r.ok) {
-        if (r.status === 400 || r.status === 403) showToast('視聴者数の取得に失敗（APIキーを確認してください）', 'error');
-        return;
+    const url = `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${chunk.join(',')}&key=${encodeURIComponent(ytApiKey)}`;
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) {
+      if ((r.status === 400 || r.status === 403) && !viewerKeyErrorShown) {
+        viewerKeyErrorShown = true;   // 毎回出すとうるさいので1回だけ
+        showToast('視聴者数の取得に失敗（⚙ で API キーを確認してください）', 'error');
       }
-      const data = await r.json();
-      (data.items || []).forEach(it => {
-        const cv = it.liveStreamingDetails && it.liveStreamingDetails.concurrentViewers;
-        map[it.id] = (cv != null) ? parseInt(cv, 10) : null;
-      });
-    } catch (e) { return; }
+      return;
+    }
+    const data = await r.json();
+    (data.items || []).forEach(it => {
+      const cv = it.liveStreamingDetails && it.liveStreamingDetails.concurrentViewers;
+      const n = cv != null ? parseInt(cv, 10) : NaN;
+      if (!isNaN(n)) counts.set(entryKey({ type: 'youtube', kind: 'video', value: it.id }), n);
+    });
+  }
+}
+async function fetchListedViewers(counts) {
+  const json = await fetchApi('/api/vmiru-streams');
+  (json.streams || []).forEach(stream => {
+    const e = parseEntry(stream.url);
+    if (!e || typeof stream.viewers !== 'number') return;
+    const key = entryKey(e);
+    if (!counts.has(key)) counts.set(key, stream.viewers);
+  });
+}
+async function fetchViewerCounts() {
+  if (document.hidden || viewerFetching) return;
+  const vids = state.slots.filter(s => isFilled(s) && (s.type === 'youtube' || s.kind === 'channel'));
+  if (!vids.length) return;
+  viewerFetching = true;
+  const counts = new Map();
+  try {
+    if (ytApiKey) {
+      const ids = [...new Set(vids.filter(s => s.type === 'youtube').map(s => s.value))];
+      try { await fetchYouTubeApiViewers(ids, counts); } catch (e) {}
+    }
+    if (HAS_VALID_ORIGIN && vids.some(s => !counts.has(entryKey(s)))) {
+      try { await fetchListedViewers(counts); } catch (e) {}
+    }
+  } finally {
+    viewerFetching = false;
   }
   vids.forEach(s => {
-    const v = map[s.value];
-    s.viewers = (typeof v === 'number' && !isNaN(v)) ? v : undefined;
+    const v = counts.get(entryKey(s));
+    s.viewers = typeof v === 'number' ? v : undefined;
     updateLivePill(s);
   });
 }
 function startViewerPolling() {
   clearInterval(viewerTimer);
-  viewerTimer = null;
-  if (!ytApiKey) {
-    // キー解除時はピルを消す
-    state.slots.forEach(s => { s.viewers = undefined; updateLivePill(s); });
-    return;
-  }
+  state.slots.forEach(s => { s.viewers = undefined; updateLivePill(s); });
   fetchViewerCounts();
   viewerTimer = setInterval(fetchViewerCounts, VIEWER_POLL_MS);
 }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchViewerCounts(); });
 
 // ===== Helpers =====
 function externalUrlFor(s) {
@@ -605,7 +643,7 @@ function buildEmptyFrame(s, i) {
     <div class="empty-inner">
       <div class="slot-index">枠 ${i + 1}</div>
       <form class="slot-form">
-        <input class="slot-url" type="text" placeholder="YouTube / Twitch の URL・ID" autocomplete="off" spellcheck="false">
+        <input class="slot-url" type="text" placeholder="YouTube / Twitch の URL・ID・@チャンネル" aria-label="枠 ${i + 1} に表示する URL" autocomplete="off" spellcheck="false">
         <button type="submit">表示</button>
       </form>
       <button class="slot-chat-toggle" type="button">💬 この枠にチャットを表示</button>
@@ -626,7 +664,38 @@ function buildEmptyFrame(s, i) {
   el.querySelector('.ikioi-btn').addEventListener('click', () => openIkioiPanel(s.id));
   el.querySelector('.vmiru-btn').addEventListener('click', () => openVmiruPanel(s.id));
   el.querySelector('.slot-popout-btn').addEventListener('click', () => popoutFrame(s.id));
+  attachDropTarget(el, s.id, 'swap');
   return el;
+}
+
+// 枠のドラッグ＆ドロップ: 配信中の枠へは挿入、空き枠・チャット枠へは入れ替え。
+// 空き枠に URL をドロップした場合はその枠に表示する。
+function attachDropTarget(el, id, mode) {
+  el.addEventListener('dragover', e => {
+    if (e.dataTransfer.types.includes('text/plain') || e.dataTransfer.types.includes('text/uri-list')) {
+      e.preventDefault(); el.classList.add('drop-target');
+    }
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('drop-target'));
+  el.addEventListener('drop', e => {
+    el.classList.remove('drop-target');
+    const data = e.dataTransfer.getData('text/plain');
+    if (data && data.startsWith('slot:')) {
+      e.preventDefault(); e.stopPropagation();
+      const fromId = data.slice(5);
+      if (fromId === id) return;
+      if (mode === 'swap') { swapSlots(fromId, id); return; }
+      const r = el.getBoundingClientRect();
+      moveSlot(fromId, id, (e.clientX - r.left) > r.width / 2);
+      return;
+    }
+    const slot = state.slots.find(x => x.id === id);
+    const text = e.dataTransfer.getData('text/uri-list') || data;
+    if (text && slot && !isUsed(slot)) {
+      e.preventDefault(); e.stopPropagation();
+      fillSlot(id, text);
+    }
+  });
 }
 
 function buildVideoFrame(s) {
@@ -641,23 +710,22 @@ function buildVideoFrame(s) {
     <div class="header">
       <span class="badge"></span>
       <span class="title-text"></span>
-      <button class="head-btn extlink" title="元のページで開く">↗</button>
-      <button class="head-btn popout" title="別ウィンドウにポップアウト">⧉</button>
-      <button class="head-btn reload" title="再読み込み">↺</button>
-      <button class="head-btn remove" title="この枠を空にする">×</button>
+      <button class="head-btn extlink" title="元のページで開く" aria-label="元のページで開く">↗</button>
+      <button class="head-btn popout" title="別ウィンドウにポップアウト" aria-label="別ウィンドウにポップアウト">⧉</button>
+      <button class="head-btn reload" title="再読み込み" aria-label="再読み込み">↺</button>
+      <button class="head-btn remove" title="この枠を空にする (Del)" aria-label="この枠を空にする">×</button>
     </div>
     <div class="footer">
-      <button class="pill mute-pill" title="ミュート切替">🔇</button>
-      <input type="range" class="vol-mini" min="0" max="100" value="${s.volume}" title="音量">
+      <button class="pill mute-pill" title="ミュート切替" aria-label="ミュート切替">🔇</button>
+      <input type="range" class="vol-mini" min="0" max="100" value="${s.volume}" title="この枠の音量" aria-label="この枠の音量">
       <span style="flex:1"></span>
-      <button class="pill restart-pill" title="先頭から">⏮</button>
-      <button class="pill ff-pill" title="2倍速でライブ最新に追いつく">⏩</button>
-      <button class="pill play-pill" title="再生/停止">▶</button>
+      <button class="pill restart-pill" title="先頭から" aria-label="先頭から再生">⏮</button>
+      <button class="pill ff-pill" title="2倍速でライブ最新に追いつく" aria-label="2倍速でライブ最新に追いつく">⏩</button>
+      <button class="pill play-pill" title="再生/停止" aria-label="再生/停止">▶</button>
     </div>`;
   el.querySelector('.badge').textContent = badgeText(s);
   el.querySelector('.title-text').textContent = s.title || s.value;
-  if (s.type === 'twitch' && s.kind === 'channel') el.querySelector('.restart-pill').style.display = 'none';
-  if (s.type !== 'youtube') el.querySelector('.ff-pill').style.display = 'none';
+  updateLivePills(el, s);
   el.querySelector('.live-clock').textContent = nowTimeStr();
   applyLivePill(el, s);
 
@@ -679,23 +747,7 @@ function buildVideoFrame(s) {
     e.dataTransfer.setData('text/plain', 'slot:' + s.id);
   });
   handle.addEventListener('dragend', () => el.classList.remove('dragging'));
-  el.addEventListener('dragover', e => {
-    if (e.dataTransfer.types.includes('text/plain')) { e.preventDefault(); el.classList.add('drop-target'); }
-  });
-  el.addEventListener('dragleave', () => el.classList.remove('drop-target'));
-  el.addEventListener('drop', e => {
-    el.classList.remove('drop-target');
-    const data = e.dataTransfer.getData('text/plain');
-    if (data && data.startsWith('slot:')) {
-      e.preventDefault(); e.stopPropagation();
-      const fromId = data.slice(5);
-      if (fromId !== s.id) {
-        const r = el.getBoundingClientRect();
-        const after = (e.clientX - r.left) > r.width / 2;
-        moveSlot(fromId, s.id, after);
-      }
-    }
-  });
+  attachDropTarget(el, s.id, 'insert');
 
   el.addEventListener('wheel', e => {
     if (e.target.closest('.player-host')) return;
@@ -712,6 +764,13 @@ function buildVideoFrame(s) {
   return el;
 }
 
+// ⏮ は先頭に戻れるものだけ、⏩ は YouTube ライブだけに表示
+function updateLivePills(el, s) {
+  if (!el) return;
+  el.querySelector('.restart-pill').style.display = Adapter.canSeek(s) ? '' : 'none';
+  el.querySelector('.ff-pill').style.display = (s.type === 'youtube' && s.isLive) ? '' : 'none';
+}
+
 function buildChatFrame(s) {
   const el = document.createElement('div');
   el.className = 'frame chat-frame';
@@ -720,14 +779,15 @@ function buildChatFrame(s) {
   el.innerHTML = `
     <div class="chat-head">
       <span class="chat-badge">💬 CHAT</span>
-      <select class="chat-source" title="チャットを表示する配信を選択"></select>
-      <button class="head-btn remove" title="この枠を空にする">×</button>
+      <select class="chat-source" title="チャットを表示する配信を選択" aria-label="チャットを表示する配信"></select>
+      <button class="head-btn remove" title="この枠を空にする" aria-label="この枠を空にする">×</button>
     </div>
     <div class="chat-body"></div>`;
   const sel = el.querySelector('.chat-source');
   populateChatSelect(sel, s);
   sel.addEventListener('change', () => setChatSource(s.id, sel.value));
   el.querySelector('.remove').addEventListener('click', () => emptySlot(s.id));
+  attachDropTarget(el, s.id, 'swap');
 
   const body = el.querySelector('.chat-body');
   const ext = parseExtSourceId(s.chatSourceId);
@@ -791,7 +851,7 @@ function refreshChatSelects() {
 // ブロックされた場合、配信中の枠はアプリ内フローティングパネルにフォールバック。
 function openPopoutWindow(data, name) {
   let hash = '';
-  try { hash = btoa(encodeURIComponent(JSON.stringify(data))); } catch (e) {}
+  try { hash = encodeState(data); } catch (e) {}
   const url = location.pathname + '?popout=1#' + hash;
   let win = null;
   try { win = window.open(url, name, 'width=980,height=620,resizable=yes'); } catch (e) {}
@@ -818,14 +878,16 @@ function popoutFrame(id) {
     }],
     layout: '1',
     masterVolume: state.masterVolume,
+    volumeModel: VOLUME_MODEL,
   }, 'slotpop_' + s.id);
 }
 // ツールバーから: 新しい空枠を別ウィンドウで開く
 function popoutNewFrame() {
   openPopoutWindow({
-    slots: [{ mode: 'video', type: null, kind: null, value: null, title: null, muted: true, volume: state.masterVolume, chatIndex: null }],
+    slots: [{ mode: 'video', type: null, kind: null, value: null, title: null, muted: true, volume: DEFAULT_SLOT_VOLUME, chatIndex: null }],
     layout: '1',
     masterVolume: state.masterVolume,
+    volumeModel: VOLUME_MODEL,
   }, 'slotpop_new_' + uuid());
 }
 
@@ -1009,7 +1071,8 @@ function mountYouTubePlayer(s, el) {
           s.ready = true;
           s.offline = false;
           try { const data = e.target.getVideoData(); s.isLive = !!(data && data.isLive); } catch (err) {}
-          try { if (s.muted) e.target.mute(); else e.target.unMute(); e.target.setVolume(s.volume); } catch (err) {}
+          updateLivePills(document.querySelector(`.frame[data-id="${s.id}"]`), s);
+          try { if (s.muted) e.target.mute(); else e.target.unMute(); e.target.setVolume(effectiveVolume(s)); } catch (err) {}
           updateMutePill(s.id);
           startPlaybackWatch(s);
         },
@@ -1133,18 +1196,19 @@ function showEmbedBlocked(id) {
     const wrap = document.createElement('div');
     wrap.style.cssText = `position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
       justify-content:center;text-align:center;gap:12px;padding:20px;
-      background:linear-gradient(rgba(0,0,0,0.55),rgba(0,0,0,0.75)),
-        url('${thumb}') center/cover no-repeat;`;
+      background:linear-gradient(rgba(0,0,0,0.55),rgba(0,0,0,0.75)) center/cover no-repeat;`;
+    if (thumb) wrap.style.backgroundImage = `linear-gradient(rgba(0,0,0,0.55),rgba(0,0,0,0.75)), url(${JSON.stringify(thumb)})`;
     wrap.innerHTML = `
       <div style="font-size:13px;color:#eee;font-weight:500;text-shadow:0 1px 4px #000;">
         この動画はサイトへの埋め込みが制限されています
       </div>
-      <a href="${escHtml(url)}" target="_blank" rel="noopener"
+      <a target="_blank" rel="noopener"
          style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;
                 background:#ff0033;color:#fff;border-radius:6px;font-weight:700;
                 font-size:14px;text-decoration:none;">
         ▶ YouTube で視聴する
       </a>`;
+    wrap.querySelector('a').href = url;
     host.appendChild(wrap);
   }
   const titleEl = el.querySelector('.title-text');
@@ -1179,23 +1243,38 @@ function showVideoError(id, msg) {
   if (titleEl) titleEl.textContent = `[エラー] ${msg}`;
 }
 
+// ===== Volume =====
+// 実際の音量 = 枠の音量 × マスター音量 / 100（0〜100）。枠ごとのバランスはマスターを動かしても保たれる
+function slotVolume(s) { return Math.max(0, Math.min(100, Number.isFinite(s.volume) ? s.volume : DEFAULT_SLOT_VOLUME)); }
+function effectiveVolumeExact(s) { return slotVolume(s) * state.masterVolume / 100; }
+function effectiveVolume(s) {
+  const v = effectiveVolumeExact(s);
+  return v > 0 ? Math.max(1, Math.round(v)) : 0;   // YouTube は整数のみ。0 より大きければ最低 1
+}
+
 // ===== Twitch audio (player API only) =====
 function syncTwitchAudio(s, retry = true) {
   if (!s?.player || s.type !== 'twitch') return;
-  const volume = Math.max(0, Math.min(100, Number.isFinite(s.volume) ? s.volume : state.masterVolume));
+  const volume = effectiveVolumeExact(s);
   try { s.player.setVolume(volume / 100); s.player.setMuted(s.muted || volume === 0); } catch (e) {}
   if (retry) { setTimeout(() => syncTwitchAudio(s, false), 150); setTimeout(() => syncTwitchAudio(s, false), 500); }
 }
+// Twitch プレーヤー上で直接操作された音量・ミュートを枠の状態に反映する
 function readTwitchAudio(s) {
   if (!s?.player || s.type !== 'twitch') return;
   try {
-    const nextMuted = !!s.player.getMuted();
-    const nextVolume = Math.round(Math.max(0, Math.min(1, s.player.getVolume())) * 100);
+    const playerMuted = !!s.player.getMuted();
+    const playerVolume = Math.max(0, Math.min(1, s.player.getVolume())) * 100;
+    const audible = effectiveVolumeExact(s) > 0;
     let changed = false;
-    if (nextMuted !== s.muted) { s.muted = nextMuted; updateMutePill(s.id); changed = true; }
+    // 音量 0 による自動ミュートは枠のミュート状態として扱わない
+    if (audible && playerMuted !== s.muted) { s.muted = playerMuted; updateMutePill(s.id); changed = true; }
     const slider = document.querySelector(`.frame[data-id="${s.id}"] .vol-mini`);
-    if (document.activeElement !== slider && Number.isFinite(nextVolume) && nextVolume !== s.volume) {
-      s.volume = nextVolume; if (slider) slider.value = nextVolume; changed = true;
+    if (state.masterVolume > 0 && document.activeElement !== slider && Number.isFinite(playerVolume) &&
+        Math.abs(playerVolume - effectiveVolumeExact(s)) > 0.5) {
+      s.volume = Math.round(Math.min(100, playerVolume * 100 / state.masterVolume));
+      if (slider) slider.value = s.volume;
+      changed = true;
     }
     if (changed) save();
   } catch (e) {}
@@ -1216,7 +1295,7 @@ const Adapter = {
   pause(s) { s.desiredPlaying = false; s.recoveryStage = 0; if (!s.player) return; try { if (s.type === 'youtube') s.player.pauseVideo(); else if (s.type === 'twitch') s.player.pause(); } catch (e) {} },
   mute(s)  { if (!s.player) return; try { if (s.type === 'youtube') s.player.mute(); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
   unmute(s){ if (!s.player) return; try { if (s.type === 'youtube') s.player.unMute(); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
-  setVolume(s, val) { if (!s.player) return; try { if (s.type === 'youtube') s.player.setVolume(val); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
+  applyVolume(s) { if (!s.player) return; try { if (s.type === 'youtube') s.player.setVolume(effectiveVolume(s)); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
   seek(s, sec) { if (!s.player) return; try { if (s.type === 'youtube') s.player.seekTo(sec, true); else if (s.type === 'twitch') s.player.seek(sec); } catch (e) {} },
   setRate(s, rate) { if (!s.player) return; try { if (s.type === 'youtube' && s.player.setPlaybackRate) s.player.setPlaybackRate(rate); } catch (e) {} },
   getDuration(s) { if (!s.player) return null; try { if (s.player.getDuration) return s.player.getDuration(); } catch (e) {} return null; },
@@ -1237,7 +1316,7 @@ const Adapter = {
     return false;
   },
   canSeek(s) {
-    if (s.type === 'youtube') return s.kind === 'video';
+    if (s.type === 'youtube') return s.kind === 'video' && !s.isLive;   // ライブで先頭に戻すと DVR の最初まで戻ってしまう
     if (s.type === 'twitch') return s.kind === 'vod' || s.kind === 'clip';
     return false;
   },
@@ -1260,11 +1339,12 @@ function toggleMute(id) {
   if (!s) return;
   s.muted = !s.muted;
   if (!s.muted && s.volume === 0) {
-    s.volume = state.masterVolume > 0 ? state.masterVolume : 50;
+    s.volume = DEFAULT_SLOT_VOLUME;
     const slider = document.querySelector(`.frame[data-id="${s.id}"] .vol-mini`);
     if (slider) slider.value = s.volume;
   }
   s.muted ? Adapter.mute(s) : Adapter.unmute(s);
+  if (!s.muted) Adapter.applyVolume(s);
   updateMutePill(id); save();
 }
 function setVolume(id, val) {
@@ -1273,7 +1353,7 @@ function setVolume(id, val) {
   s.volume = val;
   if (val > 0 && s.muted) { s.muted = false; Adapter.unmute(s); updateMutePill(id); }
   else if (val === 0 && !s.muted) { s.muted = true; Adapter.mute(s); updateMutePill(id); }
-  Adapter.setVolume(s, val); save();
+  Adapter.applyVolume(s); save();
 }
 function seek(id, sec)    { const s = state.slots.find(x => x.id === id); if (s) Adapter.seek(s, sec); }
 function playOne(id) {
@@ -1362,12 +1442,7 @@ function toggleSolo() {
 function setMasterVolume(val) {
   state.masterVolume = val;
   $('masterVolLabel').textContent = val;
-  filledVideos().forEach(s => {
-    s.volume = val;
-    Adapter.setVolume(s, val);
-    const slider = document.querySelector(`.frame[data-id="${s.id}"] .vol-mini`);
-    if (slider) slider.value = val;
-  });
+  filledVideos().forEach(s => Adapter.applyVolume(s));
   save();
 }
 
@@ -1382,18 +1457,35 @@ function snapshot() {
     })),
     layout: state.layout,
     masterVolume: state.masterVolume,
+    volumeModel: VOLUME_MODEL,
     soloMode: state.soloMode,
   };
 }
+function encodeState(data) { return btoa(encodeURIComponent(JSON.stringify(data))); }
+function decodeState(str) { return JSON.parse(decodeURIComponent(atob(str))); }
 function save() { if (IS_POPOUT) return; try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot())); } catch (e) {} }
+
+const SHARE_PREFIX = 's=';
+// 戻り値: 共有 URL から読み込んだら true（呼び出し側で保存する）
 function load() {
   const hash = location.hash.replace(/^#/, '');
-  if (hash) {
-    try { hydrate(JSON.parse(decodeURIComponent(atob(hash)))); return; } catch (e) {}
+  if (IS_POPOUT && hash) {
+    try { hydrate(decodeState(hash)); return false; } catch (e) {}
+  }
+  if (!IS_POPOUT && hash.startsWith(SHARE_PREFIX)) {
+    let shared = null;
+    try { shared = decodeState(hash.slice(SHARE_PREFIX.length)); } catch (e) {}
+    history.replaceState(null, '', location.pathname + location.search);
+    if (!shared) {
+      showToast('共有 URL を読み込めませんでした', 'error');
+    } else if (confirm('共有されたレイアウトを読み込みますか？\n（いまの保存内容は上書きされます）')) {
+      hydrate(shared);
+      return true;
+    }
   }
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) { hydrate(JSON.parse(raw)); return; }
+    if (raw) { hydrate(JSON.parse(raw)); return false; }
     // migrate older formats
     const old = localStorage.getItem('ymv_state_v2') || localStorage.getItem('ymv_state_v1');
     if (old) {
@@ -1404,19 +1496,37 @@ function load() {
       hydrate(data);
     }
   } catch (e) {}
+  return false;
 }
+function clampVolume(v, fallback) {
+  return (typeof v === 'number' && Number.isFinite(v)) ? Math.max(0, Math.min(100, Math.round(v))) : fallback;
+}
+// 外部（保存データ・共有 URL）由来の値は検証してから使う
 function hydrate(data) {
-  if (!data) return;
+  if (!data || typeof data !== 'object') return;
+  const master = clampVolume(data.masterVolume, state.masterVolume);
+  // 旧形式では枠の音量にマスター音量そのものが入っていたので、倍率方式に変換する
+  const legacyVolume = data.volumeModel !== VOLUME_MODEL;
+  const toSlotVolume = v => {
+    const vol = clampVolume(v, DEFAULT_SLOT_VOLUME);
+    if (!legacyVolume || typeof v !== 'number') return vol;
+    return master > 0 ? Math.min(100, Math.round(vol * 100 / master)) : DEFAULT_SLOT_VOLUME;
+  };
+  const fillFrom = (s, o) => {
+    if (!isValidStoredEntry(o)) return;
+    s.type = o.type; s.kind = o.kind; s.value = o.value;
+    s.title = typeof o.title === 'string' && o.title ? o.title : defaultTitleFor(o);
+  };
   if (Array.isArray(data.slots)) {
-    state.layout = data.layout || '4';
-    state.slots = data.slots.map(o => {
+    state.layout = LAYOUTS.some(l => l.id === data.layout) ? data.layout : '4';
+    state.slots = data.slots.slice(0, MAX_SLOTS).map(o => {
       const s = makeSlot();
+      if (!o || typeof o !== 'object') return s;
       s.mode = o.mode === 'chat' ? 'chat' : 'video';
-      s.type = o.type || null; s.kind = o.kind || null; s.value = o.value || null;
-      s.title = o.title || o.value || null;
+      if (s.mode === 'video') fillFrom(s, o);
       s.muted = o.muted !== false;
-      s.volume = typeof o.volume === 'number' ? o.volume : state.masterVolume;
-      s._ci = (typeof o.chatIndex === 'number') ? o.chatIndex : null;
+      s.volume = toSlotVolume(o.volume);
+      s._ci = Number.isInteger(o.chatIndex) ? o.chatIndex : null;
       return s;
     });
     state.slots.forEach(s => {
@@ -1424,20 +1534,18 @@ function hydrate(data) {
       delete s._ci;
     });
   } else if (Array.isArray(data.videos)) {
-    const lay = (data.layout && data.layout !== 'auto') ? data.layout : autoLayoutFor(data.videos.length);
+    const lay = LAYOUTS.some(l => l.id === data.layout) ? data.layout : autoLayoutFor(data.videos.length);
     state.layout = lay;
     const need = layoutCells(lay);
     state.slots = [];
     for (let i = 0; i < need; i++) {
       const s = makeSlot();
       const v = data.videos[i];
-      if (v) {
-        s.type = v.type || 'youtube';
-        s.kind = v.kind || (s.type === 'youtube' ? 'video' : 'channel');
-        s.value = v.value || v.videoId || null;
-        s.title = v.title || s.value;
+      if (v && typeof v === 'object') {
+        const type = v.type || 'youtube';
+        fillFrom(s, { type, kind: v.kind || (type === 'youtube' ? 'video' : 'channel'), value: v.value || v.videoId, title: v.title });
         s.muted = v.muted !== false;
-        s.volume = typeof v.volume === 'number' ? v.volume : state.masterVolume;
+        s.volume = toSlotVolume(v.volume);
       }
       state.slots.push(s);
     }
@@ -1447,28 +1555,50 @@ function hydrate(data) {
   while (state.slots.length < need) state.slots.push(makeSlot());
   if (state.slots.length > need) state.slots = state.slots.slice(0, need);
 
-  if (typeof data.masterVolume === 'number') {
-    state.masterVolume = data.masterVolume;
-    $('masterVol').value = data.masterVolume;
-    $('masterVolLabel').textContent = data.masterVolume;
-  }
+  state.masterVolume = master;
+  $('masterVol').value = master;
+  $('masterVolLabel').textContent = master;
   if (data.soloMode) { state.soloMode = true; $('soloBtn').classList.add('active'); }
+}
+
+// ===== Share =====
+async function shareLayout() {
+  if (!state.slots.some(isUsed)) { showToast('共有する配信がありません', 'warn'); return; }
+  const url = `${location.origin}${location.pathname}#${SHARE_PREFIX}${encodeState(snapshot())}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast('共有 URL をコピーしました', 'ok');
+  } catch (e) {
+    prompt('この URL を共有してください', url);
+  }
 }
 
 // ===== Toast =====
 let toastTimer = null;
-function showToast(msg, type = '') {
+// action: { label, run } を渡すとボタン付きで表示（例: 元に戻す）
+function showToast(msg, type = '', action = null) {
   toast.className = '';
-  toast.classList.add(type);
+  if (type) toast.classList.add(type);
   toast.textContent = msg;
+  if (action) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-action';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => { toast.classList.remove('show'); action.run(); });
+    toast.appendChild(btn);
+    toast.classList.add('has-action');
+  }
   toast.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.remove('show'), 2400);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), action ? 6000 : 2400);
 }
 
 // ===== Events =====
 $('playAllBtn').addEventListener('click', playAll);
 $('pauseAllBtn').addEventListener('click', pauseAll);
+$('syncBtn').addEventListener('click', syncSeek);
+$('shareBtn').addEventListener('click', shareLayout);
 $('muteAllBtn').addEventListener('click', muteAll);
 $('unmuteAllBtn').addEventListener('click', unmuteAll);
 $('soloBtn').addEventListener('click', toggleSolo);
@@ -1481,7 +1611,7 @@ $('masterVol').addEventListener('wheel', e => {
 }, { passive: false });
 
 $('clearBtn').addEventListener('click', () => {
-  const used = state.slots.filter(s => isFilled(s) || s.mode === 'chat').length;
+  const used = state.slots.filter(isUsed).length;
   if (used === 0) return;
   if (confirm('すべての枠を空にしますか？（レイアウトは保持されます）')) {
     state.slots.forEach(resetSlot);
@@ -1519,26 +1649,52 @@ function nowTimeStr() {
   setInterval(tick, 1000);
 })();
 
+// ===== Dialogs (settings / stream panels) =====
+// 開いたときのフォーカス位置を覚えておき、閉じたら戻す
+function openOverlay(overlay, focusEl) {
+  overlay._lastFocus = document.activeElement;
+  overlay.classList.remove('hidden');
+  if (focusEl) focusEl.focus();
+}
+function closeOverlay(overlay) {
+  if (overlay.classList.contains('hidden')) return;
+  overlay.classList.add('hidden');
+  const last = overlay._lastFocus;
+  overlay._lastFocus = null;
+  if (last && last.isConnected && typeof last.focus === 'function') last.focus();
+}
+const overlayClosers = new Map();   // overlay element -> close function
+function closeTopOverlay() {
+  for (const [overlay, close] of overlayClosers) {
+    if (!overlay.classList.contains('hidden')) { close(); return true; }
+  }
+  return false;
+}
+function anyOverlayOpen() {
+  return [...overlayClosers.keys()].some(o => !o.classList.contains('hidden'));
+}
+
 // ===== Settings (API key) =====
 function openSettings() {
   const input = $('settingsKeyInput');
   input.value = ytApiKey;
   input.type = 'password';
-  $('settingsStatus').textContent = ytApiKey ? '✅ キー設定済み（視聴者数 ON）' : '未設定（視聴者数 OFF）';
-  $('settingsOverlay').classList.remove('hidden');
-  input.focus();
+  $('settingsStatus').textContent = ytApiKey ? '✅ キー設定済み（YouTube API で視聴者数を取得）' : '未設定（ぶいみる掲載の配信のみ視聴者数を表示）';
+  openOverlay($('settingsOverlay'), input);
 }
-function closeSettings() { $('settingsOverlay').classList.add('hidden'); }
+function closeSettings() { closeOverlay($('settingsOverlay')); }
+overlayClosers.set($('settingsOverlay'), closeSettings);
 function saveSettings() {
   const val = $('settingsKeyInput').value.trim();
   ytApiKey = val;
+  viewerKeyErrorShown = false;
   try {
     if (val) localStorage.setItem(YT_API_KEY_STORAGE, val);
     else localStorage.removeItem(YT_API_KEY_STORAGE);
   } catch (e) {}
   $('settingsBtn').classList.toggle('active', !!val);
   closeSettings();
-  showToast(val ? '視聴者数を有効化しました' : '視聴者数を無効化しました', 'ok');
+  showToast(val ? 'API キーを保存しました' : 'API キーを削除しました', 'ok');
   startViewerPolling();
 }
 $('settingsBtn').addEventListener('click', openSettings);
@@ -1558,28 +1714,39 @@ $('helpBtn').addEventListener('click', () => {
     '■ 基本の流れ',
     '1) ツールバーでレイアウトを選ぶと、その数だけ枠が表示されます',
     '2) 各枠に URL / ID を入力 →「表示」で配信を再生',
+    '   ・YouTube: 動画 URL / 動画 ID / @チャンネル（配信中のライブを表示）',
+    '   ・Twitch : チャンネル / VOD / クリップの URL、twitch:チャンネル名',
     '3) 枠を「💬 チャットを表示」にすると、他の枠の配信のチャットを表示',
+    '4) 配信一覧（にじさんじ / 勢いランキング / ぶいみる）からも追加できます',
+    '   続けて選ぶと、次の空き枠に追加されます',
     '',
-    '■ チャット枠',
-    '・空き枠の「💬 この枠にチャットを表示」をクリック',
-    '・上部のメニューで、表示したい配信（他の枠）を選択',
-    '・対応: YouTube ライブ / Twitch チャンネル',
+    '■ 便利な機能',
+    '・⇄ 同期   : フォーカス中（なければ先頭）の動画の再生位置に他の動画を合わせる',
+    '・🔗 共有  : いまのレイアウトを URL でコピー',
+    '・音量     : 枠ごとの音量 × マスター音量で再生されます',
+    '・枠の左上をドラッグして並び替え、URL を空き枠にドロップして追加',
     '',
     '■ ショートカット',
     '・Space : すべて再生 / 一時停止',
     '・M     : 全ミュート / 解除',
-    '・R     : すべて先頭から',
+    '・R     : すべて先頭から（ライブ配信は除く）',
     '・F     : 全画面',
     '・S     : ソロモード',
     '・H     : ヘッダー表示 / 非表示',
-    '・1〜9  : レイアウト変更',
-    '・Del   : フォーカス中の枠を空にする',
+    '・1〜6, 8, 9 : レイアウト変更',
+    '・Del   : フォーカス中の枠を空にする（直後なら元に戻せます）',
+    '・Esc   : 開いているパネルを閉じる',
   ].join('\n'));
 });
 
 // keyboard shortcuts
 const NUM_LAYOUT = { '1': '1', '2': '2h', '3': '3', '4': '4', '5': '5', '6': '6', '8': '8', '9': '9' };
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (closeTopOverlay()) e.preventDefault();
+    return;
+  }
+  if (anyOverlayOpen()) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   switch (e.key) {
@@ -1598,7 +1765,7 @@ document.addEventListener('keydown', (e) => {
       e.preventDefault();
       setToolbarHidden(!$('app').classList.contains('toolbar-hidden'));
       break;
-    case 'Delete': case 'Backspace':
+    case 'Delete':
       if (state.focusedId) { e.preventDefault(); emptySlot(state.focusedId); }
       break;
     default:
@@ -1615,164 +1782,161 @@ document.addEventListener('drop', e => {
   fillFirstEmpty(text);
 });
 
-// ===== Nijisanji Panel =====
-let nijisanjiTargetId = null;
-
-function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+// ===== Stream list panels (にじさんじ / 勢いランキング / ぶいみる) =====
+// 各パネルは配信を共通形式 { url, title, channel, avatar, thumb, fallbackThumb, site, viewers, agencyLabel }
+// に変換してカード表示する。カードを選ぶと対象の枠に追加し、空き枠が残っていれば次の空き枠を対象に開いたままにする。
+function elem(tag, className, text) {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function panelMessage(className, ...lines) {
+  const box = elem('div', className);
+  lines.forEach((line, i) => { if (i) box.appendChild(document.createElement('br')); box.appendChild(document.createTextNode(line)); });
+  return box;
 }
 
-async function fetchNijisanjiStreams() {
-  if (location.protocol === 'file:') {
-    throw new Error('この機能は file:// では使えません。「python server.py」で起動し http://localhost:8080 を開いてください。');
-  }
-  let res;
-  try {
-    res = await fetch('/api/nijisanji-streams', { cache: 'no-store' });
-  } catch (e) {
-    throw new Error(`サーバーに接続できません（${location.origin}）。「python server.py」が起動しているか確認してください。`);
-  }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  const apiError = apiErrorMessage(json);
-  if (apiError) throw new Error(apiError);
-  // 旧形式(streams)互換、新形式(days)対応
-  if (json.days) return json.days;
-  return [{ label: '🔴 ON AIR', streams: json.streams || [] }];
-}
+function buildStreamCard(info, panel) {
+  const card = elem('div', 'nijisanji-card');
+  card.tabIndex = 0;
+  card.setAttribute('role', 'button');
+  card.setAttribute('aria-label', [info.channel, info.title].filter(Boolean).join(' — '));
 
-function buildStreamCard(stream) {
-  const ch = stream['youtube-channel'] || {};
-  const card = document.createElement('div');
-  card.className = 'nijisanji-card';
-  card.innerHTML = `
-    <img class="nijisanji-thumb" src="${escHtml(stream['thumbnail-url'] || '')}" loading="lazy"
-         onerror="this.src='${escHtml(stream['fallback-thumbnail-url'] || '')}'" alt="">
-    <div class="nijisanji-info">
-      <div class="nijisanji-channel-row">
-        <img class="nijisanji-avatar" src="${escHtml(ch['thumbnail-url'] || '')}"
-             onerror="this.style.display='none'" alt="">
-        <span class="nijisanji-channel-name">${escHtml(ch.name || '')}</span>
-      </div>
-      <div class="nijisanji-stream-title">${escHtml(stream.title || '')}</div>
-    </div>`;
-  card.addEventListener('click', () => {
-    if (!stream.url) { showToast('この配信のURLが取得できませんでした', 'error'); return; }
-    fillSlot(nijisanjiTargetId, stream.url);
-    closeNijisanjiPanel();
+  const thumb = elem('img', 'nijisanji-thumb');
+  thumb.loading = 'lazy'; thumb.alt = '';
+  thumb.addEventListener('error', () => {
+    if (info.fallbackThumb && thumb.src !== info.fallbackThumb) thumb.src = info.fallbackThumb;
+    else thumb.style.visibility = 'hidden';
   });
+  thumb.src = info.thumb || '';
+  card.appendChild(thumb);
+
+  const body = elem('div', 'nijisanji-info');
+  const row = elem('div', 'nijisanji-channel-row');
+  if (info.avatar) {
+    const avatar = elem('img', 'nijisanji-avatar');
+    avatar.alt = '';
+    avatar.addEventListener('error', () => { avatar.style.display = 'none'; });
+    avatar.src = info.avatar;
+    row.appendChild(avatar);
+  }
+  row.appendChild(elem('span', 'nijisanji-channel-name', info.channel || ''));
+  const site = info.site === 'twitch' ? 'twitch' : 'youtube';
+  row.appendChild(elem('span', `ikioi-site-badge ${site}`, site === 'twitch' ? 'Twitch' : 'YouTube'));
+  if (info.agencyLabel) row.appendChild(elem('span', 'nijisanji-section-count', info.agencyLabel));
+  body.appendChild(row);
+  body.appendChild(elem('div', 'nijisanji-stream-title', info.title || ''));
+  if (typeof info.viewers === 'number') {
+    const viewers = elem('div', 'ikioi-viewers');
+    viewers.appendChild(elem('span', 'live-dot'));
+    viewers.appendChild(document.createTextNode(`${info.viewers.toLocaleString('ja-JP')} 人視聴中`));
+    body.appendChild(viewers);
+  }
+  card.appendChild(body);
+
+  const pick = () => pickStream(panel, info, card);
+  card.addEventListener('click', pick);
+  card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
   return card;
 }
 
-function openNijisanjiPanel(slotId) {
-  nijisanjiTargetId = slotId;
-  const body = $('nijisanjiBody');
-  $('nijisanjiOverlay').classList.remove('hidden');
-  body.innerHTML = '<div class="nijisanji-loading">読み込み中…</div>';
-  fetchNijisanjiStreams().then(days => {
-    const total = days.reduce((n, d) => n + (d.streams ? d.streams.length : 0), 0);
-    if (!total) {
-      body.innerHTML = '<div class="nijisanji-empty">配信が見つかりませんでした</div>';
-      return;
-    }
-    body.innerHTML = '';
-    days.forEach(day => {
-      const streams = day.streams || [];
-      if (!streams.length) return;
-      const header = document.createElement('div');
-      header.className = 'nijisanji-section';
-      header.innerHTML = `${escHtml(day.label)} <span class="nijisanji-section-count">${streams.length}</span>`;
-      body.appendChild(header);
-      streams.forEach(stream => body.appendChild(buildStreamCard(stream)));
-    });
-  }).catch(err => {
-    body.innerHTML = `<div class="nijisanji-error">読み込みに失敗しました。<br>${escHtml(String(err))}</div>`;
-  });
+async function pickStream(panel, info, card) {
+  if (!info.url) { showToast('この配信のURLが取得できませんでした', 'error'); return; }
+  const targetId = panel.targetId;
+  if (!targetId) return;
+  if (!await fillSlot(targetId, info.url, { title: info.title })) return;
+  card.classList.add('added');
+  if (panel.targetId !== targetId) return;   // 追加中にパネルが閉じられた
+  const index = state.slots.findIndex(s => s.id === targetId);
+  const next = state.slots.find(s => !isUsed(s));
+  if (next) {
+    panel.targetId = next.id;
+    showToast(`枠 ${index + 1} に追加しました。続けて選ぶと次の空き枠に追加されます`, 'ok');
+  } else {
+    panel.close();
+  }
 }
 
-function closeNijisanjiPanel() {
-  $('nijisanjiOverlay').classList.add('hidden');
-  nijisanjiTargetId = null;
+function createStreamPanel(key, { normalize, onOpen }) {
+  const overlay = $(key + 'Overlay');
+  const body = $(key + 'Body');
+  const closeBtn = $(key + 'CloseBtn');
+  const panel = {
+    targetId: null,
+    requestId: 0,
+    open(slotId) {
+      panel.targetId = slotId;
+      openOverlay(overlay, closeBtn);
+      onOpen(panel);
+    },
+    close() {
+      closeOverlay(overlay);
+      panel.targetId = null;
+      panel.requestId++;
+    },
+    // 古いリクエストの結果で上書きしないよう、最新のリクエストだけ反映する
+    load(promise, render) {
+      const id = ++panel.requestId;
+      body.replaceChildren(panelMessage('nijisanji-loading', '読み込み中…'));
+      promise.then(data => { if (id === panel.requestId) render(data); })
+        .catch(err => {
+          if (id === panel.requestId) body.replaceChildren(panelMessage('nijisanji-error', '読み込みに失敗しました。', err.message));
+        });
+    },
+    // sections: [{ label, streams }]
+    render(sections) {
+      const total = sections.reduce((n, sec) => n + sec.streams.length, 0);
+      if (!total) { body.replaceChildren(panelMessage('nijisanji-empty', '配信が見つかりませんでした')); return; }
+      body.replaceChildren();
+      sections.forEach(sec => {
+        if (!sec.streams.length) return;
+        if (sec.label) {
+          const header = elem('div', 'nijisanji-section', sec.label + ' ');
+          header.appendChild(elem('span', 'nijisanji-section-count', String(sec.streams.length)));
+          body.appendChild(header);
+        }
+        sec.streams.forEach(stream => body.appendChild(buildStreamCard(normalize(stream), panel)));
+      });
+      body.scrollTop = 0;
+    },
+  };
+  closeBtn.addEventListener('click', panel.close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) panel.close(); });
+  overlayClosers.set(overlay, panel.close);
+  return panel;
 }
 
-$('nijisanjiCloseBtn').addEventListener('click', closeNijisanjiPanel);
-$('nijisanjiOverlay').addEventListener('click', e => { if (e.target === $('nijisanjiOverlay')) closeNijisanjiPanel(); });
+// --- にじさんじ ---
+const nijisanjiPanel = createStreamPanel('nijisanji', {
+  normalize: stream => {
+    const ch = stream['youtube-channel'] || {};
+    return {
+      url: stream.url, title: stream.title, channel: ch.name, avatar: ch['thumbnail-url'],
+      thumb: stream['thumbnail-url'], fallbackThumb: stream['fallback-thumbnail-url'], site: 'youtube',
+    };
+  },
+  onOpen: panel => panel.load(fetchApi('/api/nijisanji-streams'), json => {
+    // 旧形式(streams)互換、新形式(days)対応
+    const days = json.days || [{ label: '🔴 ON AIR', streams: json.streams || [] }];
+    panel.render(days.map(d => ({ label: d.label, streams: d.streams || [] })));
+  }),
+});
 
-// ===== Ikioi ranking panel =====
-let ikioiTargetId = null;
+// --- 勢いランキング ---
 let ikioiKeyword = 'Vtuber';
-
-async function fetchIkioiStreams(keyword) {
-  if (location.protocol === 'file:') {
-    throw new Error('この機能は file:// では使えません。「python server.py」で起動し http://localhost:8080 を開いてください。');
-  }
-  let res;
-  try {
-    res = await fetch(`/api/ikioi-streams?keyword=${encodeURIComponent(keyword)}`, { cache: 'no-store' });
-  } catch (e) {
-    throw new Error(`サーバーに接続できません（${location.origin}）。「python server.py」が起動しているか確認してください。`);
-  }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  const apiError = apiErrorMessage(json);
-  if (apiError) throw new Error(apiError);
-  return json.streams || [];
-}
-
-function buildIkioiCard(stream) {
-  const card = document.createElement('div');
-  card.className = 'nijisanji-card';
-  const badge = stream.site === 'twitch' ? 'twitch' : 'youtube';
-  const badgeLabel = stream.site === 'twitch' ? 'Twitch' : 'YouTube';
-  const viewers = (typeof stream.viewers === 'number')
-    ? `<div class="ikioi-viewers"><span class="live-dot"></span>${stream.viewers.toLocaleString('ja-JP')} 人視聴中</div>` : '';
-  card.innerHTML = `
-    <img class="nijisanji-thumb" src="${escHtml(stream['thumbnail-url'] || '')}" loading="lazy"
-         onerror="this.style.visibility='hidden'" alt="">
-    <div class="nijisanji-info">
-      <div class="nijisanji-channel-row">
-        <span class="nijisanji-channel-name">${escHtml(stream.channel || '')}</span>
-        <span class="ikioi-site-badge ${badge}">${badgeLabel}</span>
-      </div>
-      <div class="nijisanji-stream-title">${escHtml(stream.title || '')}</div>
-      ${viewers}
-    </div>`;
-  card.addEventListener('click', () => {
-    if (!stream.url) { showToast('この配信のURLが取得できませんでした', 'error'); return; }
-    fillSlot(ikioiTargetId, stream.url);
-    closeIkioiPanel();
-  });
-  return card;
-}
-
+const listedStream = stream => ({
+  url: stream.url, title: stream.title, channel: stream.channel, avatar: stream['channel-thumbnail'],
+  thumb: stream['thumbnail-url'], site: stream.site, viewers: stream.viewers, agencyLabel: stream['agency-label'],
+});
+const ikioiPanel = createStreamPanel('ikioi', {
+  normalize: listedStream,
+  onOpen: panel => { $('ikioiKeyword').value = ikioiKeyword; loadIkioiResults(); },
+});
 function loadIkioiResults() {
-  const body = $('ikioiBody');
-  body.innerHTML = '<div class="nijisanji-loading">読み込み中…</div>';
-  fetchIkioiStreams(ikioiKeyword).then(streams => {
-    if (!streams.length) {
-      body.innerHTML = '<div class="nijisanji-empty">配信が見つかりませんでした</div>';
-      return;
-    }
-    body.innerHTML = '';
-    const header = document.createElement('div');
-    header.className = 'nijisanji-section';
-    header.innerHTML = `🔥 ${escHtml(ikioiKeyword)} <span class="nijisanji-section-count">${streams.length}</span>`;
-    body.appendChild(header);
-    streams.forEach(stream => body.appendChild(buildIkioiCard(stream)));
-  }).catch(err => {
-    body.innerHTML = `<div class="nijisanji-error">読み込みに失敗しました。<br>${escHtml(String(err))}</div>`;
-  });
-}
-
-function openIkioiPanel(slotId) {
-  ikioiTargetId = slotId;
-  $('ikioiKeyword').value = ikioiKeyword;
-  $('ikioiOverlay').classList.remove('hidden');
-  loadIkioiResults();
-}
-function closeIkioiPanel() {
-  $('ikioiOverlay').classList.add('hidden');
-  ikioiTargetId = null;
+  const keyword = ikioiKeyword;
+  ikioiPanel.load(fetchApi(`/api/ikioi-streams?keyword=${encodeURIComponent(keyword)}`),
+    json => ikioiPanel.render([{ label: `🔥 ${keyword}`, streams: json.streams || [] }]));
 }
 function submitIkioiSearch() {
   const kw = $('ikioiKeyword').value.trim();
@@ -1780,66 +1944,27 @@ function submitIkioiSearch() {
   ikioiKeyword = kw;
   loadIkioiResults();
 }
-$('ikioiCloseBtn').addEventListener('click', closeIkioiPanel);
-$('ikioiOverlay').addEventListener('click', e => { if (e.target === $('ikioiOverlay')) closeIkioiPanel(); });
 $('ikioiSearchBtn').addEventListener('click', submitIkioiSearch);
 $('ikioiKeyword').addEventListener('keydown', e => { if (e.key === 'Enter') submitIkioiSearch(); });
 
-// ===== vmiru (ぶいみる) panel =====
-let vmiruTargetId = null;
+// --- ぶいみる（事務所で絞り込み） ---
 let vmiruStreams = [];
 let vmiruFilter = '';   // '' = すべて、それ以外は agency キー
-
-async function fetchVmiruStreams() {
-  if (location.protocol === 'file:') {
-    throw new Error('この機能は file:// では使えません。「python server.py」で起動し http://localhost:8080 を開いてください。');
-  }
-  let res;
-  try {
-    res = await fetch('/api/vmiru-streams', { cache: 'no-store' });
-  } catch (e) {
-    throw new Error(`サーバーに接続できません（${location.origin}）。「python server.py」が起動しているか確認してください。`);
-  }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  const apiError = apiErrorMessage(json);
-  if (apiError) throw new Error(apiError);
-  return json.streams || [];
-}
-
-function buildVmiruCard(stream) {
-  const card = document.createElement('div');
-  card.className = 'nijisanji-card';
-  const badge = stream.site === 'twitch' ? 'twitch' : 'youtube';
-  const badgeLabel = stream.site === 'twitch' ? 'Twitch' : 'YouTube';
-  const viewers = (typeof stream.viewers === 'number')
-    ? `<div class="ikioi-viewers"><span class="live-dot"></span>${stream.viewers.toLocaleString('ja-JP')} 人視聴中</div>` : '';
-  const agency = stream['agency-label'] ? `<span class="nijisanji-section-count">${escHtml(stream['agency-label'])}</span>` : '';
-  card.innerHTML = `
-    <img class="nijisanji-thumb" src="${escHtml(stream['thumbnail-url'] || '')}" loading="lazy"
-         onerror="this.style.visibility='hidden'" alt="">
-    <div class="nijisanji-info">
-      <div class="nijisanji-channel-row">
-        <img class="nijisanji-avatar" src="${escHtml(stream['channel-thumbnail'] || '')}"
-             onerror="this.style.display='none'" alt="">
-        <span class="nijisanji-channel-name">${escHtml(stream.channel || '')}</span>
-        <span class="ikioi-site-badge ${badge}">${badgeLabel}</span>
-        ${agency}
-      </div>
-      <div class="nijisanji-stream-title">${escHtml(stream.title || '')}</div>
-      ${viewers}
-    </div>`;
-  card.addEventListener('click', () => {
-    if (!stream.url) { showToast('この配信のURLが取得できませんでした', 'error'); return; }
-    fillSlot(vmiruTargetId, stream.url);
-    closeVmiruPanel();
-  });
-  return card;
-}
-
+const vmiruPanel = createStreamPanel('vmiru', {
+  normalize: listedStream,
+  onOpen: panel => {
+    vmiruFilter = '';
+    $('vmiruCats').replaceChildren();
+    panel.load(fetchApi('/api/vmiru-streams'), json => {
+      vmiruStreams = json.streams || [];
+      renderVmiruCats();
+      renderVmiruList();
+    });
+  },
+});
 function renderVmiruCats() {
   const cats = $('vmiruCats');
-  cats.innerHTML = '';
+  cats.replaceChildren();
   // agency キー → ラベル、件数を集計（出現順を維持）
   const order = [];
   const labelOf = {}, countOf = {};
@@ -1849,62 +1974,38 @@ function renderVmiruCats() {
     countOf[key]++;
   });
   const mkChip = (key, label, count) => {
-    const b = document.createElement('button');
+    const b = elem('button', 'vmiru-cat' + (vmiruFilter === key ? ' active' : ''), label);
     b.type = 'button';
-    b.className = 'vmiru-cat' + (vmiruFilter === key ? ' active' : '');
-    b.innerHTML = `${escHtml(label)}<span class="cat-count">${count}</span>`;
+    b.setAttribute('aria-pressed', String(vmiruFilter === key));
+    b.appendChild(elem('span', 'cat-count', String(count)));
     b.addEventListener('click', () => { vmiruFilter = key; renderVmiruCats(); renderVmiruList(); });
     cats.appendChild(b);
   };
   mkChip('', 'すべて', vmiruStreams.length);
   order.forEach(key => mkChip(key, labelOf[key], countOf[key]));
 }
-
 function renderVmiruList() {
-  const body = $('vmiruBody');
   const list = vmiruFilter
     ? vmiruStreams.filter(s => (s.agency || '__none') === vmiruFilter)
     : vmiruStreams;
-  if (!list.length) {
-    body.innerHTML = '<div class="nijisanji-empty">配信が見つかりませんでした</div>';
-    return;
-  }
-  body.innerHTML = '';
-  list.forEach(s => body.appendChild(buildVmiruCard(s)));
-  body.scrollTop = 0;
+  vmiruPanel.render([{ label: null, streams: list }]);
 }
 
-function openVmiruPanel(slotId) {
-  vmiruTargetId = slotId;
-  vmiruFilter = '';
-  $('vmiruCats').innerHTML = '';
-  $('vmiruBody').innerHTML = '<div class="nijisanji-loading">読み込み中…</div>';
-  $('vmiruOverlay').classList.remove('hidden');
-  fetchVmiruStreams().then(streams => {
-    vmiruStreams = streams;
-    renderVmiruCats();
-    renderVmiruList();
-  }).catch(err => {
-    $('vmiruBody').innerHTML = `<div class="nijisanji-error">読み込みに失敗しました。<br>${escHtml(String(err))}</div>`;
-  });
-}
-function closeVmiruPanel() {
-  $('vmiruOverlay').classList.add('hidden');
-  vmiruTargetId = null;
-}
-$('vmiruCloseBtn').addEventListener('click', closeVmiruPanel);
-$('vmiruOverlay').addEventListener('click', e => { if (e.target === $('vmiruOverlay')) closeVmiruPanel(); });
+function openNijisanjiPanel(slotId) { nijisanjiPanel.open(slotId); }
+function openIkioiPanel(slotId) { ikioiPanel.open(slotId); }
+function openVmiruPanel(slotId) { vmiruPanel.open(slotId); }
 
 // ===== Init =====
 loadToolbarVisibility();
 renderLayoutTiles();
-load();
+const loadedFromShare = load();
 if (state.slots.length === 0) {
   state.layout = state.layout || '4';
   for (let i = 0; i < layoutCells(state.layout); i++) state.slots.push(makeSlot());
 }
 renderLayoutTiles();
 renderGrid();
+if (loadedFromShare) save();
 fetchTitles();
 $('settingsBtn').classList.toggle('active', !!ytApiKey);
 startViewerPolling();

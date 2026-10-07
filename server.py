@@ -1,13 +1,25 @@
 #!/usr/bin/env python3
-"""Local static server with the same stream-source modules used in production."""
-import http.server, json, logging, os, socketserver, urllib.parse
-from stream_sources.errors import public_error
-from stream_sources.ikioi import get_streams as get_ikioi_streams
-from stream_sources.nijisanji import get_on_air
-from stream_sources.vmiru import get_streams as get_vmiru_streams
+"""Local static server with the same stream-source modules used in production.
 
-PORT = 8080
+Usage: python server.py [--open]
+  PORT (default 8080) and HOST (default 127.0.0.1) can be set via environment variables.
+  If the port is busy, the next free port is used.
+"""
+import http.server, os, posixpath, socketserver, sys, urllib.parse, webbrowser
+from stream_sources.api import handle_api
+
+HOST = os.environ.get("HOST", "127.0.0.1")
+PORT = int(os.environ.get("PORT", "8080"))
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
+# Only the frontend is served; source code, .git, tests etc. are never exposed.
+PUBLIC_FILES = {"/", "/index.html"}
+PUBLIC_DIRS = ("/assets/",)
+
+
+def is_public(path):
+    path = posixpath.normpath(urllib.parse.unquote(path))
+    return path in PUBLIC_FILES or path.startswith(PUBLIC_DIRS)
+
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -15,40 +27,45 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
-        try:
-            if path == "/api/nijisanji-streams":
-                return self._json(200, {"days": [{"label": "🔴 ON AIR", "streams": get_on_air()}]})
-            if path == "/api/ikioi-streams":
-                params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-                keyword = (params.get("keyword") or ["Vtuber"])[0]
-                return self._json(200, {"keyword": keyword, "streams": get_ikioi_streams(keyword)})
-            if path == "/api/vmiru-streams":
-                return self._json(200, {"streams": get_vmiru_streams()})
-        except Exception as exc:
-            logging.exception("API request failed: %s", path)
-            return self._json(*public_error(exc))
+        if handle_api(self, path):
+            return
+        if not is_public(path):
+            return self.send_error(404)
         super().do_GET()
 
-    def _json(self, code, payload):
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        cache_control = "public, max-age=30, stale-while-revalidate=300" if code < 400 else "no-store"
-        self.send_header("Cache-Control", cache_control)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers(); self.wfile.write(body)
+    def do_HEAD(self):
+        if not is_public(urllib.parse.urlparse(self.path).path):
+            return self.send_error(404)
+        super().do_HEAD()
 
     def end_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         super().end_headers()
 
+
 class ThreadingHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = True
-    allow_reuse_address = True
+    # Windows SO_REUSEADDR allows double-binding, which would hide a busy port.
+    allow_reuse_address = os.name != "nt"
+
+
+def bind(host, port, attempts=10):
+    for candidate in range(port, port + attempts):
+        try:
+            return ThreadingHTTPServer((host, candidate), Handler)
+        except OSError:
+            print(f"ポート {candidate} は使用中です。次を試します…")
+    raise SystemExit(f"空いているポートが見つかりませんでした（{port}〜{port + attempts - 1}）")
+
 
 if __name__ == "__main__":
-    with ThreadingHTTPServer(("", PORT), Handler) as httpd:
-        print(f"http://localhost:{PORT} で起動中 (Ctrl+C で停止)")
-        httpd.serve_forever()
+    with bind(HOST, PORT) as httpd:
+        url = f"http://{'localhost' if HOST in ('127.0.0.1', '0.0.0.0') else HOST}:{httpd.server_address[1]}"
+        print(f"{url} で起動中 (Ctrl+C で停止)")
+        if "--open" in sys.argv:
+            webbrowser.open(url)
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            pass

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>YouTube + Twitch 同時視聴ビューワー</title>
-<link rel="stylesheet" href="assets/styles.css?v=20260922">
+<link rel="stylesheet" href="assets/styles.css?v=20261007">
 </head>
 <body>
 <div id="app">
@@ -17,6 +17,7 @@
       <span class="group-label">一括</span>
       <button class="ctrl-btn primary" id="playAllBtn" title="すべて再生 (Space)"><span class="ico">▶</span> 再生</button>
       <button class="ctrl-btn" id="pauseAllBtn" title="すべて一時停止"><span class="ico">⏸</span> 停止</button>
+      <button class="ctrl-btn" id="syncBtn" title="フォーカス中（なければ先頭）の動画の再生位置に合わせる（ライブは対象外）"><span class="ico">⇄</span> 同期</button>
     </div>
     <div class="group">
       <span class="group-label">音量</span>
@@ -24,7 +25,7 @@
       <button class="ctrl-btn" id="unmuteAllBtn" title="すべてミュート解除"><span class="ico">🔊</span> 解除</button>
       <button class="ctrl-btn" id="soloBtn" title="フォーカスのみ音を出す">🎯 ソロ</button>
       <div class="vol-wrap">
-        <input id="masterVol" type="range" min="0" max="100" value="5" title="マスター音量">
+        <input id="masterVol" type="range" min="0" max="100" value="5" title="マスター音量（各枠の音量に掛け合わせます）" aria-label="マスター音量">
         <span class="vol-label" id="masterVolLabel">5</span>
       </div>
     </div>
@@ -38,10 +39,11 @@
       <span style="font-size: 12px; color: var(--text-muted); padding: 0 8px;" id="countLabel">0</span>
     </div>
     <div class="group" style="border-right:0; padding-right:2px">
-      <button class="icon-btn" id="popoutNewBtn" title="枠を別ウィンドウで追加">🪟</button>
-      <button class="icon-btn" id="settingsBtn" title="設定（視聴者数 API キー）"><span class="ico">⚙</span></button>
-      <button class="icon-btn" id="fullscreenBtn" title="全画面 (F)"><span class="ico">⛶</span></button>
-      <button class="icon-btn" id="helpBtn" title="ヘルプ"><span class="ico">?</span></button>
+      <button class="icon-btn" id="shareBtn" title="いまのレイアウトを URL で共有" aria-label="レイアウトを URL で共有">🔗</button>
+      <button class="icon-btn" id="popoutNewBtn" title="枠を別ウィンドウで追加" aria-label="枠を別ウィンドウで追加">🪟</button>
+      <button class="icon-btn" id="settingsBtn" title="設定（視聴者数 API キー）" aria-label="設定"><span class="ico">⚙</span></button>
+      <button class="icon-btn" id="fullscreenBtn" title="全画面 (F)" aria-label="全画面"><span class="ico">⛶</span></button>
+      <button class="icon-btn" id="helpBtn" title="ヘルプ" aria-label="ヘルプ"><span class="ico">?</span></button>
       <button class="icon-btn" id="hideToolbarBtn" title="ヘッダーを隠す (H)" aria-label="ヘッダーを隠す">︿</button>
     </div>
   </div>
@@ -52,15 +54,15 @@
 
 <button id="showToolbarBtn" type="button" aria-label="ヘッダーを表示">﹀ ヘッダーを表示</button>
 
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <div id="nijisanjiOverlay" class="hidden">
-  <div id="nijisanjiPanel">
+  <div id="nijisanjiPanel" role="dialog" aria-modal="true" aria-labelledby="nijisanjiTitle">
     <div class="nijisanji-head">
-      <div class="nijisanji-head-title">
+      <div class="nijisanji-head-title" id="nijisanjiTitle">
         <span class="live-dot"></span>ON AIR — にじさんじ
       </div>
-      <button id="nijisanjiCloseBtn" class="nijisanji-close">×</button>
+      <button id="nijisanjiCloseBtn" class="nijisanji-close" type="button" aria-label="閉じる">×</button>
     </div>
     <div class="nijisanji-body" id="nijisanjiBody">
       <div class="nijisanji-loading">読み込み中…</div>
@@ -69,13 +71,13 @@
 </div>
 
 <div id="ikioiOverlay" class="hidden">
-  <div id="ikioiPanel">
+  <div id="ikioiPanel" role="dialog" aria-modal="true" aria-labelledby="ikioiTitle">
     <div class="nijisanji-head">
-      <div class="nijisanji-head-title">🔥 勢いランキング — 配信を追加</div>
-      <button id="ikioiCloseBtn" class="nijisanji-close">×</button>
+      <div class="nijisanji-head-title" id="ikioiTitle">🔥 勢いランキング — 配信を追加</div>
+      <button id="ikioiCloseBtn" class="nijisanji-close" type="button" aria-label="閉じる">×</button>
     </div>
     <div class="ikioi-search">
-      <input id="ikioiKeyword" type="text" placeholder="キーワード（例: Vtuber, ホロライブ, Apex…）" spellcheck="false">
+      <input id="ikioiKeyword" type="text" aria-label="検索キーワード" placeholder="キーワード（例: Vtuber, ホロライブ, Apex…）" spellcheck="false">
       <button id="ikioiSearchBtn" type="button">検索</button>
     </div>
     <div class="nijisanji-body" id="ikioiBody">
@@ -85,10 +87,10 @@
 </div>
 
 <div id="vmiruOverlay" class="hidden">
-  <div id="vmiruPanel">
+  <div id="vmiruPanel" role="dialog" aria-modal="true" aria-labelledby="vmiruTitle">
     <div class="nijisanji-head">
-      <div class="nijisanji-head-title">📺 ぶいみる — 配信を追加</div>
-      <button id="vmiruCloseBtn" class="nijisanji-close">×</button>
+      <div class="nijisanji-head-title" id="vmiruTitle">📺 ぶいみる — 配信を追加</div>
+      <button id="vmiruCloseBtn" class="nijisanji-close" type="button" aria-label="閉じる">×</button>
     </div>
     <div class="vmiru-cats" id="vmiruCats"></div>
     <div class="nijisanji-body" id="vmiruBody">
@@ -98,16 +100,17 @@
 </div>
 
 <div id="settingsOverlay" class="hidden">
-  <div id="settingsPanel">
-    <div class="settings-head">⚙ 設定</div>
+  <div id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="settings-head" id="settingsTitle">⚙ 設定</div>
     <div class="settings-body">
       <label for="settingsKeyInput">YouTube Data API v3 キー</label>
       <div class="key-row">
-        <input id="settingsKeyInput" type="password" placeholder="AIza... (空欄で視聴者数機能オフ)" autocomplete="off" spellcheck="false">
-        <button class="icon-btn" id="settingsKeyReveal" type="button" title="表示/非表示">👁</button>
+        <input id="settingsKeyInput" type="password" placeholder="AIza...（空欄でも一部の配信は視聴者数を表示）" autocomplete="off" spellcheck="false">
+        <button class="icon-btn" id="settingsKeyReveal" type="button" title="表示/非表示" aria-label="キーの表示/非表示">👁</button>
       </div>
       <p class="hint">
-        設定すると各枠に<b>同時視聴者数</b>が表示されます。キーはこのブラウザにのみ保存され、外部には送信しません（YouTube API への問い合わせのみ）。<br>
+        各枠に<b>同時視聴者数</b>が表示されます。キーが未設定でも、ぶいみるに掲載されている配信（YouTube / Twitch）は視聴者数を表示します。
+        キーを設定すると、すべての YouTube ライブの視聴者数を取得できます。キーはこのブラウザにのみ保存され、外部には送信しません（YouTube API への問い合わせのみ）。<br>
         取得方法: <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a> → 「YouTube Data API v3」を有効化 → 認証情報で API キーを作成。<br>
         公開サイトで使う場合は、キーに<b>HTTP リファラー制限</b>を設定してください。
       </p>
@@ -122,6 +125,7 @@
   </div>
 </div>
 
-<script src="assets/app.js?v=20260922b"></script>
+<script src="assets/parse.js?v=20261007"></script>
+<script src="assets/app.js?v=20261007"></script>
 </body>
 </html>

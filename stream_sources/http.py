@@ -11,8 +11,8 @@ HEADERS = {
 }
 
 
-def get_text(url, *, timeout=12, accept="text/html,application/xhtml+xml,*/*;q=0.8"):
-    request = urllib.request.Request(url, headers={**HEADERS, "Accept": accept})
+def get_text(url, *, timeout=12, accept="text/html,application/xhtml+xml,*/*;q=0.8", headers=None):
+    request = urllib.request.Request(url, headers={**HEADERS, "Accept": accept, **(headers or {})})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read().decode("utf-8", "replace")
