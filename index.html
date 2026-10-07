@@ -33,7 +33,7 @@
 
   #app {
     display: grid;
-    grid-template-rows: 52px 44px 1fr;
+    grid-template-rows: 44px 1fr;
     height: 100vh;
   }
 
@@ -398,9 +398,7 @@
 
   /* mobile */
   @media (max-width: 720px) {
-    #app { grid-template-rows: auto auto 1fr; }
-    #topbar { flex-wrap: wrap; padding: 8px; gap: 6px; height: auto; min-height: 52px; }
-    .topbar-hint { order: 99; flex: 1 1 100%; }
+    #app { grid-template-rows: auto 1fr; }
     #toolbar { flex-wrap: wrap; padding: 4px 8px; gap: 4px; height: auto; }
     #toolbar .group { padding: 0 4px; }
     #toolbar .group-label { display: none; }
@@ -485,8 +483,6 @@ const state = {
 function getTwitchParents() {
   const set = new Set();
   if (location.hostname) set.add(location.hostname);
-  set.add('localhost');
-  set.add('127.0.0.1');
   return Array.from(set).filter(Boolean);
 }
 const TWITCH_PARENTS = getTwitchParents();
@@ -498,7 +494,6 @@ const countLabel = $('countLabel');
 const toast = $('toast');
 
 // ===== Embed environment =====
-const IS_FILE_PROTOCOL = location.protocol === 'file:';
 const HAS_VALID_ORIGIN = location.protocol === 'http:' || location.protocol === 'https:';
 
 // YouTube IFrame API
@@ -1534,14 +1529,11 @@ function escHtml(s) {
 }
 
 async function fetchNijisanjiStreams() {
-  if (location.protocol === 'file:') {
-    throw new Error('この機能は file:// では使えません。「python server.py」で起動し http://localhost:8080 を開いてください。');
-  }
   let res;
   try {
     res = await fetch('/api/nijisanji-streams', { cache: 'no-store' });
   } catch (e) {
-    throw new Error(`サーバーに接続できません（${location.origin}）。「python server.py」が起動しているか確認してください。`);
+    throw new Error('配信一覧の取得に失敗しました');
   }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json();
