@@ -25,6 +25,14 @@ class CacheTests(unittest.TestCase):
             value = cache.cached("key", 5, lambda: (_ for _ in ()).throw(RuntimeError()), stale_seconds=30)
         self.assertEqual(value, ["cached"])
 
+    def test_evicts_least_recently_used_entry(self):
+        with patch.object(cache, "MAX_ENTRIES", 2):
+            cache.cached("a", 30, lambda: 1)
+            cache.cached("b", 30, lambda: 2)
+            cache.cached("a", 30, lambda: 1)  # touch "a"
+            cache.cached("c", 30, lambda: 3)
+        self.assertEqual(set(cache._entries), {"a", "c"})
+
 
 if __name__ == "__main__":
     unittest.main()

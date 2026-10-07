@@ -5,8 +5,6 @@ REM Starts a local HTTP server and opens the viewer in the default browser.
 setlocal
 cd /d "%~dp0"
 
-set PORT=8080
-
 REM Try Python 3 first (py launcher), then python, then python3
 where py >nul 2>&1
 if %ERRORLEVEL%==0 (
@@ -26,14 +24,12 @@ if %ERRORLEVEL%==0 (
 
 echo [ERROR] Python is not installed.
 echo Please install Python 3 from https://www.python.org/ and try again.
-echo Alternatively, you can open index.html directly (some videos may not work).
+echo Alternatively, you can open index.html directly (limited mode).
 pause
 exit /b 1
 
 :run
-echo Starting local server at http://localhost:%PORT%/
-echo Press Ctrl+C in this window to stop the server.
+echo Starting local server... Press Ctrl+C in this window to stop the server.
 echo.
-start "" "http://localhost:%PORT%"
-%PY% server.py
+%PY% server.py --open
 endlocal

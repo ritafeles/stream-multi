@@ -529,3 +529,19 @@
     #toolbar .group-label { display: none; }
     .logo { font-size: 13px; }
   }
+
+  /* toast with action (元に戻す) */
+  #toast.has-action { pointer-events: auto; display: flex; align-items: center; gap: 12px; }
+  #toast.has-action:not(.show) { pointer-events: none; }
+  #toast.warn { border-color: #e0a030; }
+  .toast-action {
+    background: transparent; border: 1px solid var(--border-strong); color: var(--accent);
+    border-radius: 5px; padding: 3px 10px; font-size: 12px; cursor: pointer; font-weight: 600;
+  }
+  .toast-action:hover { background: var(--panel-2); }
+
+  /* stream list cards */
+  .nijisanji-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .nijisanji-card.added { opacity: 0.6; }
+  .nijisanji-card.added .nijisanji-stream-title::before { content: "✓ 追加済み  "; color: var(--ok); font-weight: 700; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

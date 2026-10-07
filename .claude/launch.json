@@ -4,8 +4,8 @@
     {
       "name": "ymv",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8765"],
-      "port": 8765
+      "runtimeArgs": ["server.py"],
+      "port": 8080
     }
   ]
 }
