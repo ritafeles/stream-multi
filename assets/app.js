@@ -220,6 +220,7 @@ function makeSlot() {
     nextRecoveryAllowedAt: 0, isLive: false,
     ytAttachPending: false,
     audioSentAt: 0,           // アプリからプレーヤーへ音量を送った時刻（読み戻しの猶予判定用）
+    observedAudio: null,      // 前回プレーヤーから読み取った { volume, muted }
     ffTimer: null,            // 早送り(2倍速で追いつき)用ポーリング
   };
 }
@@ -280,7 +281,7 @@ function destroySlotPlayer(s) {
   clearInterval(s.ffTimer); s.ffTimer = null;
   clearTimeout(s.reconnectTimer); s.reconnectTimer = null; s.reconnectAttempts = 0;
   if (s.player && s.player.destroy) { try { s.player.destroy(); } catch (e) {} }
-  s.player = null; s.ready = false;
+  s.player = null; s.ready = false; s.observedAudio = null;
   s.ytAttachPending = false;
 }
 function resetSlot(s) {
@@ -1274,29 +1275,67 @@ function readPlayerAudio(s) {
   return null;
 }
 // プレーヤー上（YouTube / Twitch の音量バー・ミュートボタン）で直接操作された音量を枠の状態に反映し、
-// リロード後も同じ音量で再生されるように保存する
+// リロード後も同じ音量で再生されるように保存する。
+// 「プレーヤーの値が前回の読み取りから変わったとき」だけをユーザー操作とみなす。値が変わらないまま
+// アプリの音量と食い違っているのは、プレーヤーが命令を無視した（再生開始前など）だけなので送り直す。
+const AUDIO_RESEND_MS = 3000;
 function pollPlayerAudio(s) {
-  if (!s?.player || !s.ready || Date.now() - (s.audioSentAt || 0) < AUDIO_SYNC_GRACE_MS) return;
+  if (!s?.player || !s.ready) return;
   let audio;
   try { audio = readPlayerAudio(s); } catch (e) { return; }
   if (!audio || !Number.isFinite(audio.volume)) return;
   const playerVolume = Math.max(0, Math.min(100, audio.volume));
-  let changed = false;
+  const prev = s.observedAudio;
+  s.observedAudio = { volume: playerVolume, muted: audio.muted };
+  const sinceSent = Date.now() - (s.audioSentAt || 0);
+  if (!prev || sinceSent < AUDIO_SYNC_GRACE_MS) return;
+
+  const desiredMuted = s.muted || audio.sent === 0;
+  const volumeMismatch = Math.abs(playerVolume - audio.sent) > 0.5;
+  const userChangedVolume = Math.abs(playerVolume - prev.volume) > 0.5 && volumeMismatch;
   // 音量 0 による自動ミュートは枠のミュート状態として扱わない
-  if (audio.sent > 0 && audio.muted !== s.muted) { s.muted = audio.muted; updateMutePill(s.id); changed = true; }
+  const userChangedMute = audio.muted !== prev.muted && audio.muted !== desiredMuted && audio.sent > 0;
   const slider = document.querySelector(`.frame[data-id="${s.id}"] .vol-mini`);
-  if (state.masterVolume > 0 && document.activeElement !== slider && Math.abs(playerVolume - audio.sent) > 0.5) {
+  let changed = false;
+  if (userChangedMute) { s.muted = audio.muted; updateMutePill(s.id); changed = true; }
+  if (userChangedVolume && state.masterVolume > 0 && document.activeElement !== slider) {
     const wanted = Math.round(playerVolume * 100 / state.masterVolume);
-    s.volume = Math.min(100, wanted);
-    if (slider) slider.value = s.volume;
-    changed = true;
     if (wanted > 100) {
-      // 枠の音量は最大 100（= マスター音量）。プレーヤー側も上限に合わせる
-      Adapter.applyVolume(s);
-      showToast('この枠の音量は最大です。もっと大きくするにはマスター音量を上げてください', 'warn');
+      // マスター音量より大きくされたら、マスター音量をその音量まで上げる（他の枠の実際の音量は変えない）
+      raiseMasterVolume(Math.round(playerVolume), s);
+    } else {
+      s.volume = wanted;
+      if (slider) slider.value = s.volume;
     }
+    changed = true;
   }
-  if (changed) save();
+  if (changed) { save(); return; }
+  if ((volumeMismatch || audio.muted !== desiredMuted) && sinceSent >= AUDIO_RESEND_MS) {
+    // プレーヤーがまだアプリの音量になっていない → 送り直す
+    desiredMuted ? Adapter.mute(s) : Adapter.unmute(s);
+    Adapter.applyVolume(s);
+  }
+}
+// マスター音量を上げ、他の枠は「枠の音量」を下げて実際の音量を保つ。source の枠は 100（= 新しいマスター）にする
+function raiseMasterVolume(newMaster, source) {
+  const oldMaster = state.masterVolume;
+  if (newMaster <= oldMaster) return;
+  state.masterVolume = newMaster;
+  $('masterVol').value = newMaster;
+  $('masterVolLabel').textContent = newMaster;
+  state.slots.forEach(o => {
+    if (o.mode !== 'video') return;
+    if (o === source) {
+      o.volume = 100;
+    } else if (o.volume > 0) {
+      o.volume = Math.max(1, Math.round(o.volume * oldMaster / newMaster));
+      Adapter.applyVolume(o);
+    }
+    const slider = document.querySelector(`.frame[data-id="${o.id}"] .vol-mini`);
+    if (slider) slider.value = o.volume;
+  });
+  markAudioSent(source);
+  showToast(`マスター音量を ${newMaster} に上げました`, 'ok');
 }
 function startAudioPolling(s) {
   if (!s || s.audioPoll) return;
