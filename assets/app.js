@@ -219,6 +219,7 @@ function makeSlot() {
     recoveryStage: 0, lastProgressAt: 0, lastMediaTime: null,
     nextRecoveryAllowedAt: 0, isLive: false,
     ytAttachPending: false,
+    audioSentAt: 0,           // アプリからプレーヤーへ音量を送った時刻（読み戻しの猶予判定用）
     ffTimer: null,            // 早送り(2倍速で追いつき)用ポーリング
   };
 }
@@ -274,7 +275,7 @@ function defaultTitleFor(entry) {
 }
 function destroySlotPlayer(s) {
   if (!s) return;
-  stopTwitchAudioPolling(s);
+  stopAudioPolling(s);
   clearInterval(s.playbackWatch); s.playbackWatch = null;
   clearInterval(s.ffTimer); s.ffTimer = null;
   clearTimeout(s.reconnectTimer); s.reconnectTimer = null; s.reconnectAttempts = 0;
@@ -1072,8 +1073,10 @@ function mountYouTubePlayer(s, el) {
           s.offline = false;
           try { const data = e.target.getVideoData(); s.isLive = !!(data && data.isLive); } catch (err) {}
           updateLivePills(document.querySelector(`.frame[data-id="${s.id}"]`), s);
+          markAudioSent(s);
           try { if (s.muted) e.target.mute(); else e.target.unMute(); e.target.setVolume(effectiveVolume(s)); } catch (err) {}
           updateMutePill(s.id);
+          startAudioPolling(s);
           startPlaybackWatch(s);
         },
         onStateChange: (e) => {
@@ -1125,7 +1128,7 @@ function mountTwitchPlayer(s, el) {
       s.ready = true;
       s.offline = false;
       syncTwitchAudio(s);
-      startTwitchAudioPolling(s);
+      startAudioPolling(s);
       startPlaybackWatch(s);
     });
     s.player.addEventListener(Twitch.Player.PLAYING, () => {
@@ -1252,39 +1255,54 @@ function effectiveVolume(s) {
   return v > 0 ? Math.max(1, Math.round(v)) : 0;   // YouTube は整数のみ。0 より大きければ最低 1
 }
 
-// ===== Twitch audio (player API only) =====
+// ===== Player audio sync =====
+// アプリ → プレーヤーに音量を送った直後は、プレーヤーから読み取れる値がまだ古いことがある
+// （YouTube は postMessage 経由で非同期に反映される）。その間は読み取りをスキップする。
+const AUDIO_SYNC_GRACE_MS = 1500;
+function markAudioSent(s) { s.audioSentAt = Date.now(); }
+
 function syncTwitchAudio(s, retry = true) {
   if (!s?.player || s.type !== 'twitch') return;
   const volume = effectiveVolumeExact(s);
+  markAudioSent(s);
   try { s.player.setVolume(volume / 100); s.player.setMuted(s.muted || volume === 0); } catch (e) {}
   if (retry) { setTimeout(() => syncTwitchAudio(s, false), 150); setTimeout(() => syncTwitchAudio(s, false), 500); }
 }
-// Twitch プレーヤー上で直接操作された音量・ミュートを枠の状態に反映する
-function readTwitchAudio(s) {
-  if (!s?.player || s.type !== 'twitch') return;
-  try {
-    const playerMuted = !!s.player.getMuted();
-    const playerVolume = Math.max(0, Math.min(1, s.player.getVolume())) * 100;
-    const audible = effectiveVolumeExact(s) > 0;
-    let changed = false;
-    // 音量 0 による自動ミュートは枠のミュート状態として扱わない
-    if (audible && playerMuted !== s.muted) { s.muted = playerMuted; updateMutePill(s.id); changed = true; }
-    const slider = document.querySelector(`.frame[data-id="${s.id}"] .vol-mini`);
-    if (state.masterVolume > 0 && document.activeElement !== slider && Number.isFinite(playerVolume) &&
-        Math.abs(playerVolume - effectiveVolumeExact(s)) > 0.5) {
-      s.volume = Math.round(Math.min(100, playerVolume * 100 / state.masterVolume));
-      if (slider) slider.value = s.volume;
-      changed = true;
+function readPlayerAudio(s) {
+  if (s.type === 'youtube') return { muted: !!s.player.isMuted(), volume: Number(s.player.getVolume()), sent: effectiveVolume(s) };
+  if (s.type === 'twitch') return { muted: !!s.player.getMuted(), volume: Number(s.player.getVolume()) * 100, sent: effectiveVolumeExact(s) };
+  return null;
+}
+// プレーヤー上（YouTube / Twitch の音量バー・ミュートボタン）で直接操作された音量を枠の状態に反映し、
+// リロード後も同じ音量で再生されるように保存する
+function pollPlayerAudio(s) {
+  if (!s?.player || !s.ready || Date.now() - (s.audioSentAt || 0) < AUDIO_SYNC_GRACE_MS) return;
+  let audio;
+  try { audio = readPlayerAudio(s); } catch (e) { return; }
+  if (!audio || !Number.isFinite(audio.volume)) return;
+  const playerVolume = Math.max(0, Math.min(100, audio.volume));
+  let changed = false;
+  // 音量 0 による自動ミュートは枠のミュート状態として扱わない
+  if (audio.sent > 0 && audio.muted !== s.muted) { s.muted = audio.muted; updateMutePill(s.id); changed = true; }
+  const slider = document.querySelector(`.frame[data-id="${s.id}"] .vol-mini`);
+  if (state.masterVolume > 0 && document.activeElement !== slider && Math.abs(playerVolume - audio.sent) > 0.5) {
+    const wanted = Math.round(playerVolume * 100 / state.masterVolume);
+    s.volume = Math.min(100, wanted);
+    if (slider) slider.value = s.volume;
+    changed = true;
+    if (wanted > 100) {
+      // 枠の音量は最大 100（= マスター音量）。プレーヤー側も上限に合わせる
+      Adapter.applyVolume(s);
+      showToast('この枠の音量は最大です。もっと大きくするにはマスター音量を上げてください', 'warn');
     }
-    if (changed) save();
-  } catch (e) {}
+  }
+  if (changed) save();
 }
-function startTwitchAudioPolling(s) {
-  if (!s || s.type !== 'twitch' || s.audioPoll) return;
-  readTwitchAudio(s);
-  s.audioPoll = setInterval(() => readTwitchAudio(s), 700);
+function startAudioPolling(s) {
+  if (!s || s.audioPoll) return;
+  s.audioPoll = setInterval(() => pollPlayerAudio(s), 700);
 }
-function stopTwitchAudioPolling(s) {
+function stopAudioPolling(s) {
   if (!s?.audioPoll) return;
   clearInterval(s.audioPoll); s.audioPoll = null;
 }
@@ -1293,9 +1311,9 @@ function stopTwitchAudioPolling(s) {
 const Adapter = {
   play(s)  { s.desiredPlaying = true; if (!s.player || s.offline) return; try { if (s.type === 'youtube') s.player.playVideo(); else if (s.type === 'twitch') s.player.play(); } catch (e) {} },
   pause(s) { s.desiredPlaying = false; s.recoveryStage = 0; if (!s.player) return; try { if (s.type === 'youtube') s.player.pauseVideo(); else if (s.type === 'twitch') s.player.pause(); } catch (e) {} },
-  mute(s)  { if (!s.player) return; try { if (s.type === 'youtube') s.player.mute(); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
-  unmute(s){ if (!s.player) return; try { if (s.type === 'youtube') s.player.unMute(); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
-  applyVolume(s) { if (!s.player) return; try { if (s.type === 'youtube') s.player.setVolume(effectiveVolume(s)); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
+  mute(s)  { if (!s.player) return; markAudioSent(s); try { if (s.type === 'youtube') s.player.mute(); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
+  unmute(s){ if (!s.player) return; markAudioSent(s); try { if (s.type === 'youtube') s.player.unMute(); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
+  applyVolume(s) { if (!s.player) return; markAudioSent(s); try { if (s.type === 'youtube') s.player.setVolume(effectiveVolume(s)); else if (s.type === 'twitch') syncTwitchAudio(s); } catch (e) {} },
   seek(s, sec) { if (!s.player) return; try { if (s.type === 'youtube') s.player.seekTo(sec, true); else if (s.type === 'twitch') s.player.seek(sec); } catch (e) {} },
   setRate(s, rate) { if (!s.player) return; try { if (s.type === 'youtube' && s.player.setPlaybackRate) s.player.setPlaybackRate(rate); } catch (e) {} },
   getDuration(s) { if (!s.player) return null; try { if (s.player.getDuration) return s.player.getDuration(); } catch (e) {} return null; },
