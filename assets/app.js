@@ -22,7 +22,7 @@ const state = {
   layout: '4',
   focusedId: null,
   soloMode: false,
-  masterVolume: 5,
+  masterVolume: 20,
   ytApiReady: false,
   twitchApiReady: false,
   pendingPlayers: [],
